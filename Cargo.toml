@@ -1,7 +1,16 @@
 [package]
-name = "payload-dumper"
-version = "0.1.0"
+authors = [
+    "Kartik Sharma <kartik.sharma522@gmail.com>",
+    "Ajeet D'Souza <98ajeet@gmail.com>",
+]
+description = "Android OTA payload dumper"
 edition = "2021"
+keywords = ["android", "cli"]
+license = "MIT"
+name = "otadump"
+repository = "https://github.com/crazystylus/otadump"
+rust-version = "1.68.0"
+version = "0.1.0"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
