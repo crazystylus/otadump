@@ -24,6 +24,7 @@ pub fn main() -> Result<()> {
     const METADATA_SIGNATURE_SIZE_LEN: usize = 4;
 
     let input_file = File::open("/Users/ajeetdsouza/ws/payload-dumper/payload.bin")?;
+    let old_path = Some("tmp/old");
     let input_mmap = unsafe { Mmap::map(&input_file) }?;
     let input_data = input_mmap.as_ref();
     let mut base_offset = 0;
@@ -97,25 +98,38 @@ pub fn main() -> Result<()> {
             const BLOCK_SIZE: u64 = 4096;
 
             // Allocate output file
-            let output_path = format!("tmp/{}.img", partition.partition_name);
-            let output_file_len: u64 = partition
-                .operations
-                .iter()
-                .map(|op| op.dst_extents.first().unwrap().num_blocks() * BLOCK_SIZE)
-                .sum();
-            let output_file = OpenOptions::new()
-                .read(true)
-                .write(true)
-                .create_new(true)
-                .open(&output_path)?;
-            output_file.set_len(output_file_len)?;
+            let output = {
+                let output_path = format!("tmp/{}.img", partition.partition_name);
+                let output_file_len: u64 = partition
+                    .operations
+                    .iter()
+                    .map(|op| op.dst_extents.first().unwrap().num_blocks() * BLOCK_SIZE)
+                    .sum();
+                let output_file = OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .create_new(true)
+                    .open(&output_path)?;
+                output_file.set_len(output_file_len)?;
 
-            let output = Arc::new(SyncUnsafeCell::new(unsafe {
-                MmapMut::map_mut(&output_file)
-            }?));
+                Arc::new(SyncUnsafeCell::new(unsafe {
+                    MmapMut::map_mut(&output_file)
+                }?))
+            };
+
+            let old_partition = match &old_path {
+                Some(path) => {
+                    let file = File::open(format!("{}/{}", path, partition.partition_name))?;
+                    let mmap = Arc::new(unsafe { Mmap::map(&file) }?);
+                    Some(mmap)
+                }
+                None => None,
+            };
 
             for op in partition.operations {
-                let output = Arc::clone(&output);
+                let output = output.clone();
+                let old_partition_mmap = old_partition.clone();
+
                 scope.spawn(move |_| {
                     let input_offset = op.data_offset.unwrap() as usize;
                     let input_len = op.data_length.unwrap() as usize;
@@ -139,10 +153,14 @@ pub fn main() -> Result<()> {
                         )
                     };
 
+                    let old_partition_data = old_partition_mmap
+                        .as_ref()
+                        .map(|part_mmap| part_mmap.as_ref().as_ref());
+
                     if let Some(hash) = &op.data_sha256_hash {
                         verify_sha256(input_slice, hash).unwrap();
                     }
-                    run_op(op, input_slice, output_data).unwrap();
+                    run_op(op, input_slice, output_data, old_partition_data).unwrap();
                 });
             }
         }
@@ -152,11 +170,18 @@ pub fn main() -> Result<()> {
     Ok(())
 }
 
-fn run_op(op: InstallOperation, input: &[u8], output: &mut [u8]) -> Result<()> {
+fn run_op(
+    op: InstallOperation,
+    input: &[u8],
+    output: &mut [u8],
+    _old_data: Option<&[u8]>,
+) -> Result<()> {
     match Type::from_i32(op.r#type) {
         Some(Type::ReplaceXz) => run_op_replace_xz(input, output),
         Some(Type::ReplaceBz) => run_op_replace_bz(input, output),
         Some(Type::Replace) => run_op_replace(input, output),
+        Some(Type::SourceCopy) => bail!("unimplemented op: SourceCopy"),
+        Some(Type::SourceBsdiff) => bail!("unimplemented op: SourceBsdiff"),
         Some(op) => bail!("unimplemented op: {op:?}"),
         None => bail!("invalid op"),
     }
