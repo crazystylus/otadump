@@ -16,6 +16,7 @@ version = "0.1.0"
 
 [dependencies]
 anyhow = "1.0.69"
+bsdiff = "0.1.6"
 bzip2 = "0.4.4"
 hex = "0.4.3"
 memmap2 = "0.5.10"

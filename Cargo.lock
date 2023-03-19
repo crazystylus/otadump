@@ -30,6 +30,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "bsdiff"
+version = "0.1.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "53a5456cea81693e6d82a95ab193fdaca148588aa7665b2b05d51bb487b08e91"
+
+[[package]]
 name = "bytes"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -329,6 +335,7 @@ name = "otadump"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bsdiff",
  "bzip2",
  "hex",
  "memmap2",

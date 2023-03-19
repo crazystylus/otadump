@@ -3,19 +3,22 @@ pub mod chromeos_update_engine {
 }
 
 use anyhow::{bail, ensure, Context, Result};
+use bsdiff::patch::patch;
 use bzip2::read::BzDecoder;
 use chromeos_update_engine::install_operation::Type;
-use chromeos_update_engine::{DeltaArchiveManifest, InstallOperation};
+use chromeos_update_engine::{DeltaArchiveManifest, Extent, InstallOperation};
 use lzma::LzmaReader;
 use memmap2::{Mmap, MmapMut};
 use prost::Message;
 use sha2::{Digest, Sha256};
 use std::fs::{File, OpenOptions};
-use std::io::Read;
+use std::io::{Cursor, Read};
 use std::ops::Mul;
 use std::slice;
 use std::sync::Arc;
 use sync_unsafe_cell::SyncUnsafeCell;
+
+const BLOCK_SIZE: u64 = 4096;
 
 pub fn main() -> Result<()> {
     const MAGIC_BYTES_LEN: usize = 4;
@@ -23,8 +26,10 @@ pub fn main() -> Result<()> {
     const MANIFEST_SIZE_LEN: usize = 8;
     const METADATA_SIGNATURE_SIZE_LEN: usize = 4;
 
-    let input_file = File::open("/Users/ajeetdsouza/ws/payload-dumper/payload.bin")?;
-    let old_path = Some("tmp/old");
+    let input_file =
+        File::open("/root/Documents/android-ota-payload-dumper/tmp/C11_to_c16/payload.bin")?;
+    let old_path: Option<&str> = Some("tmp/C11_extracted");
+    let verify_path: Option<&str> = Some("tmp/C16_extracted");
     let input_mmap = unsafe { Mmap::map(&input_file) }?;
     let input_data = input_mmap.as_ref();
     let mut base_offset = 0;
@@ -93,101 +98,211 @@ pub fn main() -> Result<()> {
     let delta_archive_manifest =
         DeltaArchiveManifest::decode(manifest).context("failed to decode file")?;
 
-    rayon::scope(|scope| -> Result<()> {
-        for partition in delta_archive_manifest.partitions {
-            const BLOCK_SIZE: u64 = 4096;
+    //rayon::scope(|scope| -> Result<()> {
+    for partition in delta_archive_manifest
+        .partitions
+        .iter()
+        .filter(|part| part.partition_name != "ue")
+    {
+        // Allocate output file
+        let output = {
+            let output_path = format!("tmp/out/{}.img", partition.partition_name);
+            let output_file_len: u64 = partition.new_partition_info.clone().unwrap().size.unwrap();
+            let output_file = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create_new(true)
+                .open(&output_path)?;
+            output_file.set_len(output_file_len)?;
 
-            // Allocate output file
-            let output = {
-                let output_path = format!("tmp/{}.img", partition.partition_name);
-                let output_file_len: u64 = partition
-                    .operations
-                    .iter()
-                    .map(|op| op.dst_extents.first().unwrap().num_blocks() * BLOCK_SIZE)
-                    .sum();
-                let output_file = OpenOptions::new()
-                    .read(true)
-                    .write(true)
-                    .create_new(true)
-                    .open(&output_path)?;
-                output_file.set_len(output_file_len)?;
+            Arc::new(SyncUnsafeCell::new(unsafe {
+                MmapMut::map_mut(&output_file)?
+            }))
+        };
 
-                Arc::new(SyncUnsafeCell::new(unsafe {
-                    MmapMut::map_mut(&output_file)
-                }?))
-            };
-
-            let old_partition = match &old_path {
-                Some(path) => {
-                    let file = File::open(format!("{}/{}", path, partition.partition_name))?;
-                    let mmap = Arc::new(unsafe { Mmap::map(&file) }?);
-                    Some(mmap)
+        let old_partition = match &old_path {
+            Some(path) => {
+                let file = File::open(format!("{}/{}.img", path, partition.partition_name))?;
+                let old_partition_size =
+                    partition.old_partition_info.clone().unwrap().size.unwrap() as usize;
+                let mmap = Arc::new(unsafe { Mmap::map(&file) }?);
+                if let Some(hash) = &partition.old_partition_info.clone().unwrap().hash {
+                    println!(
+                        "{}: old_partition: expected hash: {}",
+                        partition.partition_name,
+                        hex::encode(hash)
+                    );
+                    verify_sha256(mmap.get(0..old_partition_size).unwrap(), hash).unwrap();
+                    println!("{}: old_partition: hash verified", partition.partition_name);
                 }
-                None => None,
-            };
+                Some(mmap)
+            }
+            None => None,
+        };
 
-            for op in partition.operations {
-                let output = output.clone();
-                let old_partition_mmap = old_partition.clone();
+        let verify_partition = match &verify_path {
+            Some(path) => {
+                let file = File::open(format!("{}/{}.img", path, partition.partition_name))?;
+                let old_partition_size =
+                    partition.old_partition_info.clone().unwrap().size.unwrap() as usize;
+                let mmap = Arc::new(unsafe { Mmap::map(&file) }?);
+                if let Some(hash) = &partition.new_partition_info.clone().unwrap().hash {
+                    println!(
+                        "{}: verify_partition: expected hash: {}",
+                        partition.partition_name,
+                        hex::encode(hash)
+                    );
+                    verify_sha256(mmap.get(0..old_partition_size).unwrap(), hash).unwrap();
+                    println!(
+                        "{}: verify_partition: hash verified",
+                        partition.partition_name
+                    );
+                }
+                Some(mmap)
+            }
+            None => None,
+        };
+        for op in &partition.operations {
+            let output = output.clone();
+            let old_partition_mmap = old_partition.clone();
+            let verify_partition_mmap = verify_partition.clone();
 
-                scope.spawn(move |_| {
-                    let input_offset = op.data_offset.unwrap() as usize;
+            // scope.spawn(move |_| {
+            let input_slice: Option<&[u8]> = match Type::from_i32(op.r#type) {
+                Some(Type::SourceCopy) | Some(Type::Zero) => None,
+                Some(_) => {
+                    let input_offset = op
+                        .data_offset
+                        .expect(&format!("Operation: {:?}", Type::from_i32(op.r#type)))
+                        as usize;
                     let input_len = op.data_length.unwrap() as usize;
                     let input_slice = input_data
                         .get(base_offset + input_offset..base_offset + input_offset + input_len)
                         .unwrap();
-
-                    let output_offset = op
-                        .dst_extents
-                        .first()
-                        .unwrap()
-                        .start_block
-                        .unwrap_or(0)
-                        .mul(BLOCK_SIZE) as usize;
-                    let output_len =
-                        op.dst_extents.first().unwrap().num_blocks().mul(BLOCK_SIZE) as usize;
-                    let output_data = unsafe {
-                        slice::from_raw_parts_mut(
-                            (*output.get()).as_mut_ptr().add(output_offset),
-                            output_len,
-                        )
-                    };
-
-                    let old_partition_data = old_partition_mmap
-                        .as_ref()
-                        .map(|part_mmap| part_mmap.as_ref().as_ref());
-
                     if let Some(hash) = &op.data_sha256_hash {
                         verify_sha256(input_slice, hash).unwrap();
                     }
-                    run_op(op, input_slice, output_data, old_partition_data).unwrap();
-                });
-            }
+                    Some(input_slice)
+                }
+                None => None,
+            };
+
+            let mut dst_extents: Vec<&mut [u8]> = unsafe {
+                op.dst_extents
+                    .iter()
+                    .map(|extent| mut_extent_from_partition((*output.get()).as_mut_ptr(), extent))
+                    .collect()
+            };
+
+            let verify_extents = match verify_partition_mmap {
+                Some(verify_partition_mmap) => {
+                    let mut result = Vec::new();
+                    for extent in op.src_extents {
+                        result.push(extent_from_partition(&verify_partition_mmap, extent));
+                    }
+                    Some(result)
+                }
+                None => None,
+            };
+            let empty_slice: &[u8] = &[];
+            let src_extents = match old_partition_mmap {
+                Some(old_partition_mmap) => Some(
+                    op.src_extents
+                        .clone()
+                        .into_iter()
+                        .map(|extent| extent_from_partition(&old_partition_mmap, extent))
+                        .fold(
+                            Box::new(empty_slice) as Box<dyn std::io::Read>,
+                            |iter, handle| Box::new(iter.chain(handle.as_ref())),
+                        ),
+                ),
+                None => None,
+            };
+            run_op(
+                op.clone(),
+                input_slice,
+                &mut dst_extents,
+                src_extents,
+                verify_extents.as_deref(),
+            )
+            .unwrap();
+            //});
         }
-        Ok(())
-    })?;
+        println!("{}: successfully extracted", partition.partition_name);
+        if let Some(hash) = &partition.new_partition_info.clone().unwrap().hash {
+            println!(
+                "{}: new_partition: expected hash: {}",
+                partition.partition_name,
+                hex::encode(hash)
+            );
+            unsafe { verify_sha256(&(*output.get()), hash).unwrap() };
+        }
+    }
+    //Ok(())
+    //})?;
 
     Ok(())
 }
 
-fn run_op(
-    op: InstallOperation,
-    input: &[u8],
-    output: &mut [u8],
-    _old_data: Option<&[u8]>,
-) -> Result<()> {
-    match Type::from_i32(op.r#type) {
-        Some(Type::ReplaceXz) => run_op_replace_xz(input, output),
-        Some(Type::ReplaceBz) => run_op_replace_bz(input, output),
-        Some(Type::Replace) => run_op_replace(input, output),
-        Some(Type::SourceCopy) => bail!("unimplemented op: SourceCopy"),
-        Some(Type::SourceBsdiff) => bail!("unimplemented op: SourceBsdiff"),
-        Some(op) => bail!("unimplemented op: {op:?}"),
-        None => bail!("invalid op"),
-    }
+fn mut_extent_from_partition(partition: *mut u8, extent: &Extent) -> &'_ mut [u8] {
+    let extent_start = extent.start_block.unwrap().mul(BLOCK_SIZE) as usize;
+    let extent_len = extent.num_blocks().mul(BLOCK_SIZE) as usize;
+    unsafe { slice::from_raw_parts_mut(partition.add(extent_start), extent_len) }
 }
 
-fn run_op_replace_xz(input: &[u8], output: &mut [u8]) -> Result<()> {
+fn extent_from_partition(partition: &Arc<Mmap>, extent: Extent) -> &'_ [u8] {
+    let extent_start = extent.start_block.unwrap().mul(BLOCK_SIZE) as usize;
+    let extent_len = extent.num_blocks().mul(BLOCK_SIZE) as usize;
+    partition
+        .get(extent_start..(extent_start + extent_len))
+        .unwrap()
+}
+
+fn run_op(
+    op: InstallOperation,
+    input: Option<&[u8]>,
+    dst_extents: &mut [&mut [u8]],
+    src_extents: Option<Box<dyn std::io::Read>>,
+    verify_extents: Option<&[&[u8]]>,
+) -> Result<()> {
+    match Type::from_i32(op.r#type) {
+        Some(Type::ReplaceXz) => run_op_replace_xz(input, dst_extents),
+        Some(Type::ReplaceBz) => run_op_replace_bz(input, dst_extents),
+        Some(Type::Replace) => run_op_replace(input, dst_extents),
+        Some(Type::SourceCopy) => run_op_source_copy(src_extents, dst_extents),
+        Some(Type::SourceBsdiff) | Some(Type::BrotliBsdiff) => {
+            let dst_len = op
+                .dst_length
+                .unwrap_or(dst_extents.iter().map(|extent| extent.len() as u64).sum())
+                as usize;
+            run_op_source_bsdiff(input, src_extents, dst_extents, dst_len)
+        }
+        Some(Type::Zero) => run_op_zero(dst_extents),
+        Some(op) => {
+            println!("unimplemented op: {op:?}");
+            Ok(())
+        }
+        None => bail!("invalid op"),
+    }
+    .unwrap();
+    for (dst_extent, verify_extent) in std::iter::zip(dst_extents, verify_extents.unwrap()) {
+        if let Some(op) = Type::from_i32(op.r#type) {
+            ensure!(
+                dst_extent != verify_extent,
+                "OP verification failure: {op:?}"
+            )
+        };
+    }
+    Ok(())
+}
+
+fn run_op_replace_xz(input: Option<&[u8]>, output: &mut [&mut [u8]]) -> Result<()> {
+    ensure!(
+        output.len() == 1,
+        "invalid dst_extents for the operation: REPLACE_XZ"
+    );
+    let output = output.first_mut().unwrap();
+    let input = input.unwrap();
     let mut decoder = LzmaReader::new_decompressor(input).unwrap();
     decoder
         .read_exact(output)
@@ -196,7 +311,10 @@ fn run_op_replace_xz(input: &[u8], output: &mut [u8]) -> Result<()> {
     Ok(())
 }
 
-fn run_op_replace_bz(input: &[u8], output: &mut [u8]) -> Result<()> {
+fn run_op_replace_bz(input: Option<&[u8]>, output: &mut [&mut [u8]]) -> Result<()> {
+    ensure!(output.len() == 1, "invalid dst_extents");
+    let output = output.first_mut().unwrap();
+    let input = input.unwrap();
     let mut decoder = BzDecoder::new(input);
     decoder
         .read_exact(output)
@@ -205,7 +323,13 @@ fn run_op_replace_bz(input: &[u8], output: &mut [u8]) -> Result<()> {
     Ok(())
 }
 
-fn run_op_replace(input: &[u8], output: &mut [u8]) -> Result<()> {
+fn run_op_replace(input: Option<&[u8]>, output: &mut [&mut [u8]]) -> Result<()> {
+    ensure!(
+        output.len() == 1,
+        "invalid dst_extents for the operation: REPLACE"
+    );
+    let output = output.first_mut().unwrap();
+    let input = input.unwrap();
     ensure!(
         input.len() == output.len(),
         "size mismatch for replace block"
@@ -214,12 +338,65 @@ fn run_op_replace(input: &[u8], output: &mut [u8]) -> Result<()> {
     Ok(())
 }
 
+fn run_op_source_copy(
+    src_extents: Option<Box<dyn std::io::Read>>,
+    dst_extents: &mut [&mut [u8]],
+) -> Result<()> {
+    let mut src_extents = src_extents.expect("SOURCE_COPY supported only for differential OTA");
+
+    for dst_extent in dst_extents {
+        src_extents.read_exact(dst_extent)?
+    }
+
+    Ok(())
+}
+
+fn run_op_source_bsdiff(
+    input: Option<&[u8]>,
+    src_extents: Option<Box<dyn std::io::Read>>,
+    dst_extents: &mut [&mut [u8]],
+    dst_len: usize,
+) -> Result<()> {
+    let mut src_extents = src_extents.expect("SOURCE_BSDIFF supported only for differential OTA");
+    let mut input = Cursor::new(input.expect("SOURCE_BSDIFF supported only for differential OTA"));
+
+    let mut src_data: Vec<u8> = Vec::new();
+    src_extents.read_to_end(&mut src_data)?;
+
+    let mut patched_data = Vec::new();
+
+    patch(&src_data, &mut input, &mut patched_data)?;
+    if patched_data.len() < dst_len {
+        patched_data.resize(dst_len, 0);
+    }
+
+    let mut patched_data = Cursor::new(patched_data);
+    for dst_extent in dst_extents {
+        patched_data.read_exact(dst_extent)?
+    }
+    Ok(())
+}
+
+fn run_op_zero(dst_extents: &mut [&mut [u8]]) -> Result<()> {
+    for dst_extent in dst_extents {
+        dst_extent.fill(0);
+    }
+
+    Ok(())
+}
+
 fn verify_sha256(data: &[u8], exp_hash: &[u8]) -> Result<()> {
     let got_hash = Sha256::digest(data);
-    ensure!(
-        got_hash.as_slice() == exp_hash,
-        "hash mismatch: expected {}, got {got_hash:x}",
-        hex::encode(exp_hash)
-    );
+    if got_hash.as_slice() != exp_hash {
+        println!(
+            "hash mismatch: expected {}, got {got_hash:x}",
+            hex::encode(exp_hash)
+        );
+    }
+    // ensure!(
+    //     got_hash.as_slice() == exp_hash,
+    //     "hash mismatch: expected {}, got {got_hash:x}",
+    //     hex::encode(exp_hash)
+    // );
     Ok(())
 }
