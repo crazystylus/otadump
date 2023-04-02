@@ -194,39 +194,31 @@ pub fn main() -> Result<()> {
                     .collect()
             };
 
-            let verify_extents = match verify_partition_mmap {
-                Some(verify_partition_mmap) => {
-                    let mut result = Vec::new();
-                    for extent in op.src_extents {
-                        result.push(extent_from_partition(&verify_partition_mmap, extent));
-                    }
-                    Some(result)
-                }
-                None => None,
-            };
-            let empty_slice: &[u8] = &[];
-            let src_extents = match old_partition_mmap {
-                Some(old_partition_mmap) => Some(
-                    op.src_extents
-                        .clone()
-                        .into_iter()
-                        .map(|extent| extent_from_partition(&old_partition_mmap, extent))
-                        .fold(
-                            Box::new(empty_slice) as Box<dyn std::io::Read>,
-                            |iter, handle| Box::new(iter.chain(handle.as_ref())),
-                        ),
-                ),
-                None => None,
-            };
-            run_op(
-                op.clone(),
-                input_slice,
-                &mut dst_extents,
-                src_extents,
-                verify_extents.as_deref(),
-            )
-            .unwrap();
-            //});
+            let verify_extents: Option<Vec<&[u8]>> = verify_partition_mmap.as_ref().map(|mmap| {
+                op.src_extents
+                    .iter()
+                    .map(|extent| extent_from_partition(mmap, extent))
+                    .collect()
+            });
+
+            // let src_extents = old_partition_mmap.as_ref().map(|mmap| {
+            //     op.src_extents
+            //         .iter()
+            //         .map(|extent| extent_from_partition(mmap, extent))
+            //         .fold(
+            //             Box::new(&[] as &[u8]) as Box<dyn std::io::Read>,
+            //             |reader, bytes| Box::new(reader.chain(bytes)),
+            //         )
+            // });
+            // run_op(
+            //     op.clone(),
+            //     input_slice,
+            //     &mut dst_extents,
+            //     src_extents,
+            //     verify_extents.as_deref(),
+            // )
+            // .unwrap();
+            // //});
         }
         println!("{}: successfully extracted", partition.partition_name);
         if let Some(hash) = &partition.new_partition_info.clone().unwrap().hash {
@@ -244,13 +236,14 @@ pub fn main() -> Result<()> {
     Ok(())
 }
 
-fn mut_extent_from_partition(partition: *mut u8, extent: &Extent) -> &'_ mut [u8] {
+// Fix this: you cannot convert a mut raw pointer into a shared safe pointer
+fn mut_extent_from_partition(partition: *mut u8, extent: &'_ Extent) -> &'static mut [u8] {
     let extent_start = extent.start_block.unwrap().mul(BLOCK_SIZE) as usize;
     let extent_len = extent.num_blocks().mul(BLOCK_SIZE) as usize;
     unsafe { slice::from_raw_parts_mut(partition.add(extent_start), extent_len) }
 }
 
-fn extent_from_partition(partition: &Arc<Mmap>, extent: Extent) -> &'_ [u8] {
+fn extent_from_partition<'a>(partition: &'a Arc<Mmap>, extent: &'_ Extent) -> &'a [u8] {
     let extent_start = extent.start_block.unwrap().mul(BLOCK_SIZE) as usize;
     let extent_len = extent.num_blocks().mul(BLOCK_SIZE) as usize;
     partition
