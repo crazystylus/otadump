@@ -2,151 +2,140 @@ pub mod chromeos_update_engine {
     include!(concat!(env!("OUT_DIR"), "/chromeos_update_engine.rs"));
 }
 
-use anyhow::{bail, ensure, Context, Result};
+mod payload;
+
+use crate::payload::Payload;
+use anyhow::{ensure, Context, Result};
 use bzip2::read::BzDecoder;
 use chromeos_update_engine::install_operation::Type;
-use chromeos_update_engine::{DeltaArchiveManifest, Extent, InstallOperation};
+use chromeos_update_engine::{DeltaArchiveManifest, InstallOperation};
 use lzma::LzmaReader;
 use memmap2::{Mmap, MmapMut};
 use prost::Message;
 use sha2::{Digest, Sha256};
 use std::fs::{File, OpenOptions};
-use std::io::Read;
-use std::ops::Mul;
+use std::io::{self, Read};
+use std::ops::{Div, Mul};
+use std::path::Path;
 use std::slice;
 use std::sync::Arc;
 use sync_unsafe_cell::SyncUnsafeCell;
 
-const BLOCK_SIZE: u64 = 4096;
-
-pub fn main() -> Result<()> {
-    const MAGIC_BYTES_LEN: usize = 4;
-    const FILE_FORMAT_VERSION_LEN: usize = 8;
-    const MANIFEST_SIZE_LEN: usize = 8;
-    const METADATA_SIGNATURE_SIZE_LEN: usize = 4;
-
-    let input_file = File::open("/Users/ajeetdsouza/ws/payload-dumper/payload.bin")?;
-    let input_mmap = unsafe { Mmap::map(&input_file) }?;
-    let input_data = input_mmap.as_ref();
-    let mut base_offset = 0;
-
-    // Read and validate magic bytes
-    if input_data.get(base_offset..base_offset + MAGIC_BYTES_LEN) != Some(b"CrAU") {
-        bail!("invalid magic bytes");
+fn read_all(reader: &mut impl Read, buf: &mut [u8]) -> io::Result<usize> {
+    let mut total_read = 0;
+    while total_read < buf.len() {
+        match reader.read(&mut buf[total_read..]) {
+            Ok(0) => break,
+            Ok(n) => total_read += n,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(e),
+        }
     }
-    base_offset += MAGIC_BYTES_LEN;
+    Ok(total_read)
+}
 
-    // Read and validate version
-    let file_format_version = {
-        let bytes = input_data
-            .get(base_offset..base_offset + FILE_FORMAT_VERSION_LEN)
-            .context("invalid file format")?;
-        base_offset += FILE_FORMAT_VERSION_LEN;
-        u64::from_be_bytes(
-            bytes
-                .try_into()
-                .expect("incorrect size for file_format_version"),
-        )
-    };
-    if file_format_version != 2 {
-        bail!("unsupported version: {}", file_format_version);
+fn op_replace(
+    reader: &mut impl Read,
+    dst_extents: &mut [&mut [u8]],
+    block_size: usize,
+) -> Result<()> {
+    let mut bytes_read = 0usize;
+
+    let dst_len = dst_extents.iter().map(|extent| extent.len()).sum::<usize>();
+    let (dst_extents_last, dst_extents) = dst_extents.split_last_mut().unwrap();
+
+    for extent in dst_extents.iter_mut() {
+        reader
+            .read_exact(extent)
+            .expect("failed to write to buffer");
+        bytes_read += extent.len();
     }
+    bytes_read += read_all(reader, dst_extents_last).expect("failed to write to buffer");
 
-    // Read manifest size
-    let manifest_size: usize = {
-        let bytes = input_data
-            .get(base_offset..base_offset + MANIFEST_SIZE_LEN)
-            .context("invalid file format")?;
-        base_offset += MANIFEST_SIZE_LEN;
-        u64::from_be_bytes(bytes.try_into().expect("incorrect size for manifest_size"))
-            .try_into()?
-    };
+    ensure!(
+        reader.bytes().next().is_none(),
+        "read fewer bytes than expected"
+    );
 
-    // Read metadata signature size
-    let metadata_signature_size = if file_format_version > 1 {
-        let bytes = input_data
-            .get(base_offset..base_offset + METADATA_SIGNATURE_SIZE_LEN)
-            .context("invalid file format")?;
-        base_offset += METADATA_SIGNATURE_SIZE_LEN;
-        u32::from_be_bytes(
-            bytes
-                .try_into()
-                .expect("incorrect size for metadata_signature"),
-        )
-        .try_into()?
-    } else {
-        0
-    };
+    // Align number of bytes read to block size. The formula for alignment is:
+    // ((operand + alignment - 1) / alignment) * alignment
+    let bytes_read_aligned = (bytes_read + block_size - 1)
+        .div(block_size)
+        .mul(block_size);
+    ensure!(
+        bytes_read_aligned == dst_len,
+        "more dst blocks than data, even with padding"
+    );
 
-    // Read manifest
-    let manifest = input_data
-        .get(base_offset..base_offset + manifest_size)
-        .context("invalid file format")?;
-    base_offset += manifest_size;
+    Ok(())
+}
 
-    // Read metadata signature
-    let _metadata_signature = input_data
-        .get(base_offset..base_offset + metadata_signature_size)
-        .context("invalid file format")?;
-    base_offset += metadata_signature_size;
+fn main() -> Result<()> {
+    let payload_path = "/Users/ajeetdsouza/ws/payload-dumper/payload2.bin";
+    let payload = payload_mmap(payload_path)?;
+    let payload = Payload::parse(&payload).context("unable to parse payload")?;
+    ensure!(
+        payload.magic_bytes == b"CrAU",
+        "invalid magic bytes: {}",
+        hex::encode(payload.magic_bytes)
+    );
 
-    // Decode manifest
-    let delta_archive_manifest =
-        DeltaArchiveManifest::decode(manifest).context("failed to decode file")?;
+    let manifest =
+        DeltaArchiveManifest::decode(payload.manifest).context("unable to parse manifest")?;
+    let block_size = manifest.block_size.context("block_size not defined")? as usize;
 
     rayon::scope(|scope| -> Result<()> {
-        for partition in delta_archive_manifest.partitions {
-            const BLOCK_SIZE: u64 = 4096;
+        for update in manifest.partitions {
+            let partition_path = &format!(
+                "/Users/ajeetdsouza/ws/payload-dumper/tmp2/{}.img",
+                update.partition_name
+            );
+            let partition_len = update
+                .new_partition_info
+                .and_then(|info| info.size)
+                .context("unable to determine output file size")?;
+            let partition = Arc::new(SyncUnsafeCell::new(partition_mmap(
+                partition_path,
+                partition_len,
+            )?));
 
-            // Allocate output file
-            let output_path = format!("tmp/{}.img", partition.partition_name);
-            let output_file_len: u64 = partition.new_partition_info.unwrap().size.unwrap();
-            let output_file = OpenOptions::new()
-                .read(true)
-                .write(true)
-                .create_new(true)
-                .open(&output_path)?;
-            output_file.set_len(output_file_len)?;
-
-            let output = Arc::new(SyncUnsafeCell::new(unsafe {
-                MmapMut::map_mut(&output_file)
-            }?));
-
-            for op in partition.operations {
-                let output = Arc::clone(&output);
+            for op in update.operations {
+                let partition = Arc::clone(&partition);
                 scope.spawn(move |_| {
-                    let input_slice: Option<&[u8]> = match Type::from_i32(op.r#type) {
-                        Some(Type::SourceCopy) | Some(Type::Zero) => None,
-                        Some(_) => {
-                            let input_offset = op
-                                .data_offset
-                                .expect(&format!("Operation: {:?}", Type::from_i32(op.r#type)))
-                                as usize;
-                            let input_len = op.data_length.unwrap() as usize;
-                            let input_slice = input_data
-                                .get(
-                                    base_offset + input_offset
-                                        ..base_offset + input_offset + input_len,
-                                )
-                                .unwrap();
-                            if let Some(hash) = &op.data_sha256_hash {
-                                verify_sha256(input_slice, hash).unwrap();
-                            }
-                            Some(input_slice)
+                    let data_len = op.data_length.expect("data_length not defined") as usize;
+                    let mut data = {
+                        let offset = op.data_offset.expect("data_offset not defined") as usize;
+                        payload
+                            .data
+                            .get(offset..offset + data_len)
+                            .expect("data offset exceeds payload size")
+                    };
+
+                    let partition = unsafe { (*partition.get()).as_mut_ptr() };
+                    let (mut dst_extents, dst_len) =
+                        extract_dst_extents(&op, partition, partition_len as usize, block_size)
+                            .expect("error extracting dst_extents");
+
+                    match Type::from_i32(op.r#type) {
+                        Some(Type::Replace) => {
+                            op_replace(&mut data, &mut dst_extents, block_size)
+                                .expect("error in REPLACE operation");
                         }
-                        None => None,
+                        Some(Type::ReplaceBz) => {
+                            let mut decoder = BzDecoder::new(data);
+                            op_replace(&mut decoder, &mut dst_extents, block_size)
+                                .expect("error in REPLACE_BZ operation");
+                        }
+                        Some(Type::ReplaceXz) => {
+                            let mut decoder = LzmaReader::new_decompressor(data)
+                                .expect("unable to initialize lzma decoder");
+                            op_replace(&mut decoder, &mut dst_extents, block_size)
+                                .expect("error in REPLACE_XZ operation");
+                        }
+                        Some(Type::Zero) => {} // This is a no-op since the partition is already zeroed
+                        Some(op) => panic!("unimplemented operation: {op:?}"),
+                        None => panic!("invalid op"),
                     };
-
-                    let mut dst_extents: Vec<&mut [u8]> = unsafe {
-                        op.dst_extents
-                            .iter()
-                            .map(|extent| {
-                                mut_extent_from_partition((*output.get()).as_mut_ptr(), extent)
-                            })
-                            .collect()
-                    };
-
-                    run_op(op, input_slice, &mut dst_extents).unwrap();
                 });
             }
         }
@@ -156,64 +145,57 @@ pub fn main() -> Result<()> {
     Ok(())
 }
 
-// TODO: (bug) you cannot convert a mut raw pointer into a shared safe pointer
-fn mut_extent_from_partition(partition: *mut u8, extent: &'_ Extent) -> &'static mut [u8] {
-    let extent_start = extent.start_block.unwrap().mul(BLOCK_SIZE) as usize;
-    let extent_len = extent.num_blocks().mul(BLOCK_SIZE) as usize;
-    unsafe { slice::from_raw_parts_mut(partition.add(extent_start), extent_len) }
+fn payload_mmap(path: impl AsRef<Path>) -> Result<Mmap> {
+    let path = path.as_ref();
+    let file =
+        File::open(path).with_context(|| format!("unable to open file for reading: {path:?}"))?;
+    unsafe { Mmap::map(&file) }.with_context(|| format!("failed to mmap file: {path:?}"))
 }
 
-fn run_op(op: InstallOperation, input: Option<&[u8]>, dst_extents: &mut [&mut [u8]]) -> Result<()> {
-    match Type::from_i32(op.r#type) {
-        Some(Type::ReplaceXz) => run_op_replace_xz(input, dst_extents),
-        Some(Type::ReplaceBz) => run_op_replace_bz(input, dst_extents),
-        Some(Type::Replace) => run_op_replace(input, dst_extents),
-        Some(Type::Zero) => Ok(()), // NO OP, new partition is already zeroed
-        Some(op) => bail!("unimplemented op: {op:?}"),
-        None => bail!("invalid op"),
+fn partition_mmap(path: impl AsRef<Path>, len: u64) -> Result<MmapMut> {
+    let path = path.as_ref();
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .with_context(|| format!("unable to open file for writing: {path:?}"))?;
+    file.set_len(len)?;
+    unsafe { MmapMut::map_mut(&file) }.with_context(|| format!("failed to mmap file: {path:?}"))
+}
+
+fn extract_dst_extents(
+    op: &InstallOperation,
+    partition: *mut u8,
+    partition_len: usize,
+    block_size: usize,
+) -> Result<(Vec<&'static mut [u8]>, usize)> {
+    let mut dst_extents = Vec::with_capacity(op.dst_extents.len());
+    let mut dst_len = 0usize;
+
+    for extent in &op.dst_extents {
+        let start_block = extent
+            .start_block
+            .context("start_block not defined in extent")? as usize;
+        let num_blocks = extent
+            .num_blocks
+            .context("num_blocks not defined in extent")? as usize;
+
+        let partition_offset = start_block * block_size;
+        let extent_len = num_blocks * block_size;
+
+        ensure!(
+            partition_offset + extent_len <= partition_len,
+            "extent exceeds partition size"
+        );
+        let extent =
+            unsafe { slice::from_raw_parts_mut(partition.add(partition_offset), extent_len) };
+
+        dst_extents.push(extent);
+        dst_len += extent_len;
     }
-}
 
-fn run_op_replace_xz(input: Option<&[u8]>, output: &mut [&mut [u8]]) -> Result<()> {
-    ensure!(
-        output.len() == 1,
-        "invalid dst_extents for the operation: REPLACE_XZ"
-    );
-    let output = output.first_mut().unwrap();
-    let input = input.unwrap();
-    let mut decoder = LzmaReader::new_decompressor(input).unwrap();
-    decoder
-        .read_exact(output)
-        .context("failed to decompress xz stream")?;
-    ensure!(decoder.bytes().next().is_none(), "extra bytes in xz stream");
-    Ok(())
-}
-
-fn run_op_replace_bz(input: Option<&[u8]>, output: &mut [&mut [u8]]) -> Result<()> {
-    ensure!(output.len() == 1, "invalid dst_extents");
-    let output = output.first_mut().unwrap();
-    let input = input.unwrap();
-    let mut decoder = BzDecoder::new(input);
-    decoder
-        .read_exact(output)
-        .context("failed to decompress bz stream")?;
-    ensure!(decoder.bytes().next().is_none(), "extra bytes in bz stream");
-    Ok(())
-}
-
-fn run_op_replace(input: Option<&[u8]>, output: &mut [&mut [u8]]) -> Result<()> {
-    ensure!(
-        output.len() == 1,
-        "invalid dst_extents for the operation: REPLACE"
-    );
-    let output = output.first_mut().unwrap();
-    let input = input.unwrap();
-    ensure!(
-        input.len() == output.len(),
-        "size mismatch for replace block"
-    );
-    output.copy_from_slice(input);
-    Ok(())
+    Ok((dst_extents, dst_len))
 }
 
 fn verify_sha256(data: &[u8], exp_hash: &[u8]) -> Result<()> {
