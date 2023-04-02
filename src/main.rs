@@ -5,7 +5,7 @@ pub mod chromeos_update_engine {
 use anyhow::{bail, ensure, Context, Result};
 use bzip2::read::BzDecoder;
 use chromeos_update_engine::install_operation::Type;
-use chromeos_update_engine::{DeltaArchiveManifest, InstallOperation};
+use chromeos_update_engine::{DeltaArchiveManifest, Extent, InstallOperation};
 use lzma::LzmaReader;
 use memmap2::{Mmap, MmapMut};
 use prost::Message;
@@ -16,6 +16,8 @@ use std::ops::Mul;
 use std::slice;
 use std::sync::Arc;
 use sync_unsafe_cell::SyncUnsafeCell;
+
+const BLOCK_SIZE: u64 = 4096;
 
 pub fn main() -> Result<()> {
     const MAGIC_BYTES_LEN: usize = 4;
@@ -98,11 +100,7 @@ pub fn main() -> Result<()> {
 
             // Allocate output file
             let output_path = format!("tmp/{}.img", partition.partition_name);
-            let output_file_len: u64 = partition
-                .operations
-                .iter()
-                .map(|op| op.dst_extents.first().unwrap().num_blocks() * BLOCK_SIZE)
-                .sum();
+            let output_file_len: u64 = partition.new_partition_info.unwrap().size.unwrap();
             let output_file = OpenOptions::new()
                 .read(true)
                 .write(true)
@@ -117,32 +115,38 @@ pub fn main() -> Result<()> {
             for op in partition.operations {
                 let output = Arc::clone(&output);
                 scope.spawn(move |_| {
-                    let input_offset = op.data_offset.unwrap() as usize;
-                    let input_len = op.data_length.unwrap() as usize;
-                    let input_slice = input_data
-                        .get(base_offset + input_offset..base_offset + input_offset + input_len)
-                        .unwrap();
-
-                    let output_offset = op
-                        .dst_extents
-                        .first()
-                        .unwrap()
-                        .start_block
-                        .unwrap_or(0)
-                        .mul(BLOCK_SIZE) as usize;
-                    let output_len =
-                        op.dst_extents.first().unwrap().num_blocks().mul(BLOCK_SIZE) as usize;
-                    let output_data = unsafe {
-                        slice::from_raw_parts_mut(
-                            (*output.get()).as_mut_ptr().add(output_offset),
-                            output_len,
-                        )
+                    let input_slice: Option<&[u8]> = match Type::from_i32(op.r#type) {
+                        Some(Type::SourceCopy) | Some(Type::Zero) => None,
+                        Some(_) => {
+                            let input_offset = op
+                                .data_offset
+                                .expect(&format!("Operation: {:?}", Type::from_i32(op.r#type)))
+                                as usize;
+                            let input_len = op.data_length.unwrap() as usize;
+                            let input_slice = input_data
+                                .get(
+                                    base_offset + input_offset
+                                        ..base_offset + input_offset + input_len,
+                                )
+                                .unwrap();
+                            if let Some(hash) = &op.data_sha256_hash {
+                                verify_sha256(input_slice, hash).unwrap();
+                            }
+                            Some(input_slice)
+                        }
+                        None => None,
                     };
 
-                    if let Some(hash) = &op.data_sha256_hash {
-                        verify_sha256(input_slice, hash).unwrap();
-                    }
-                    run_op(op, input_slice, output_data).unwrap();
+                    let mut dst_extents: Vec<&mut [u8]> = unsafe {
+                        op.dst_extents
+                            .iter()
+                            .map(|extent| {
+                                mut_extent_from_partition((*output.get()).as_mut_ptr(), extent)
+                            })
+                            .collect()
+                    };
+
+                    run_op(op, input_slice, &mut dst_extents).unwrap();
                 });
             }
         }
@@ -152,17 +156,31 @@ pub fn main() -> Result<()> {
     Ok(())
 }
 
-fn run_op(op: InstallOperation, input: &[u8], output: &mut [u8]) -> Result<()> {
+// TODO: (bug) you cannot convert a mut raw pointer into a shared safe pointer
+fn mut_extent_from_partition(partition: *mut u8, extent: &'_ Extent) -> &'static mut [u8] {
+    let extent_start = extent.start_block.unwrap().mul(BLOCK_SIZE) as usize;
+    let extent_len = extent.num_blocks().mul(BLOCK_SIZE) as usize;
+    unsafe { slice::from_raw_parts_mut(partition.add(extent_start), extent_len) }
+}
+
+fn run_op(op: InstallOperation, input: Option<&[u8]>, dst_extents: &mut [&mut [u8]]) -> Result<()> {
     match Type::from_i32(op.r#type) {
-        Some(Type::ReplaceXz) => run_op_replace_xz(input, output),
-        Some(Type::ReplaceBz) => run_op_replace_bz(input, output),
-        Some(Type::Replace) => run_op_replace(input, output),
+        Some(Type::ReplaceXz) => run_op_replace_xz(input, dst_extents),
+        Some(Type::ReplaceBz) => run_op_replace_bz(input, dst_extents),
+        Some(Type::Replace) => run_op_replace(input, dst_extents),
+        Some(Type::Zero) => Ok(()), // NO OP, new partition is already zeroed
         Some(op) => bail!("unimplemented op: {op:?}"),
         None => bail!("invalid op"),
     }
 }
 
-fn run_op_replace_xz(input: &[u8], output: &mut [u8]) -> Result<()> {
+fn run_op_replace_xz(input: Option<&[u8]>, output: &mut [&mut [u8]]) -> Result<()> {
+    ensure!(
+        output.len() == 1,
+        "invalid dst_extents for the operation: REPLACE_XZ"
+    );
+    let output = output.first_mut().unwrap();
+    let input = input.unwrap();
     let mut decoder = LzmaReader::new_decompressor(input).unwrap();
     decoder
         .read_exact(output)
@@ -171,7 +189,10 @@ fn run_op_replace_xz(input: &[u8], output: &mut [u8]) -> Result<()> {
     Ok(())
 }
 
-fn run_op_replace_bz(input: &[u8], output: &mut [u8]) -> Result<()> {
+fn run_op_replace_bz(input: Option<&[u8]>, output: &mut [&mut [u8]]) -> Result<()> {
+    ensure!(output.len() == 1, "invalid dst_extents");
+    let output = output.first_mut().unwrap();
+    let input = input.unwrap();
     let mut decoder = BzDecoder::new(input);
     decoder
         .read_exact(output)
@@ -180,7 +201,13 @@ fn run_op_replace_bz(input: &[u8], output: &mut [u8]) -> Result<()> {
     Ok(())
 }
 
-fn run_op_replace(input: &[u8], output: &mut [u8]) -> Result<()> {
+fn run_op_replace(input: Option<&[u8]>, output: &mut [&mut [u8]]) -> Result<()> {
+    ensure!(
+        output.len() == 1,
+        "invalid dst_extents for the operation: REPLACE"
+    );
+    let output = output.first_mut().unwrap();
+    let input = input.unwrap();
     ensure!(
         input.len() == output.len(),
         "size mismatch for replace block"
