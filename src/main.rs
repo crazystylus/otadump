@@ -18,6 +18,7 @@ use std::io::{self, Read};
 use std::ops::{Div, Mul};
 use std::path::Path;
 use std::slice;
+use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 use sync_unsafe_cell::SyncUnsafeCell;
 
@@ -71,7 +72,7 @@ fn op_replace(
 }
 
 fn main() -> Result<()> {
-    let payload_path = "/Users/ajeetdsouza/ws/payload-dumper/payload2.bin";
+    let payload_path = "payload.bin";
     let payload = payload_mmap(payload_path)?;
     let payload = Payload::parse(&payload).context("unable to parse payload")?;
     ensure!(
@@ -86,10 +87,7 @@ fn main() -> Result<()> {
 
     rayon::scope(|scope| -> Result<()> {
         for update in manifest.partitions {
-            let partition_path = &format!(
-                "/Users/ajeetdsouza/ws/payload-dumper/tmp2/{}.img",
-                update.partition_name
-            );
+            let partition_path = &format!("tmp/{}.img", update.partition_name);
             let partition_len = update
                 .new_partition_info
                 .and_then(|info| info.size)
@@ -111,8 +109,12 @@ fn main() -> Result<()> {
                             .expect("data offset exceeds payload size")
                     };
 
+                    if let Some(hash) = &op.data_sha256_hash {
+                        verify_sha256(data, hash).unwrap();
+                    }
+
                     let partition = unsafe { (*partition.get()).as_mut_ptr() };
-                    let (mut dst_extents, dst_len) =
+                    let mut dst_extents =
                         extract_dst_extents(&op, partition, partition_len as usize, block_size)
                             .expect("error extracting dst_extents");
 
@@ -169,33 +171,31 @@ fn extract_dst_extents(
     partition: *mut u8,
     partition_len: usize,
     block_size: usize,
-) -> Result<(Vec<&'static mut [u8]>, usize)> {
-    let mut dst_extents = Vec::with_capacity(op.dst_extents.len());
-    let mut dst_len = 0usize;
+) -> Result<Vec<&'static mut [u8]>> {
+    op.dst_extents
+        .iter()
+        .map(|extent| {
+            let start_block = extent
+                .start_block
+                .context("start_block not defined in extent")?
+                as usize;
+            let num_blocks = extent
+                .num_blocks
+                .context("num_blocks not defined in extent")? as usize;
 
-    for extent in &op.dst_extents {
-        let start_block = extent
-            .start_block
-            .context("start_block not defined in extent")? as usize;
-        let num_blocks = extent
-            .num_blocks
-            .context("num_blocks not defined in extent")? as usize;
+            let partition_offset = start_block * block_size;
+            let extent_len = num_blocks * block_size;
 
-        let partition_offset = start_block * block_size;
-        let extent_len = num_blocks * block_size;
+            ensure!(
+                partition_offset + extent_len <= partition_len,
+                "extent exceeds partition size"
+            );
+            let extent =
+                unsafe { slice::from_raw_parts_mut(partition.add(partition_offset), extent_len) };
 
-        ensure!(
-            partition_offset + extent_len <= partition_len,
-            "extent exceeds partition size"
-        );
-        let extent =
-            unsafe { slice::from_raw_parts_mut(partition.add(partition_offset), extent_len) };
-
-        dst_extents.push(extent);
-        dst_len += extent_len;
-    }
-
-    Ok((dst_extents, dst_len))
+            Ok(extent)
+        })
+        .collect()
 }
 
 fn verify_sha256(data: &[u8], exp_hash: &[u8]) -> Result<()> {
