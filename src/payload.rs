@@ -32,9 +32,8 @@ impl<'a> Payload<'a> {
 
         let mut offset = 0;
 
-        let magic_bytes = bytes
-            .get(offset..offset + MAGIC_BYTES_LEN)
-            .context("invalid file format")?;
+        let magic_bytes =
+            bytes.get(offset..offset + MAGIC_BYTES_LEN).context("invalid file format")?;
         offset += MAGIC_BYTES_LEN;
 
         let file_format_version = {
@@ -69,9 +68,8 @@ impl<'a> Payload<'a> {
             None
         };
 
-        let manifest = bytes
-            .get(offset..offset + manifest_size as usize)
-            .context("invalid file format")?;
+        let manifest =
+            bytes.get(offset..offset + manifest_size as usize).context("invalid file format")?;
         offset += manifest_size as usize;
 
         let metadata_signature = match metadata_signature_size {
