@@ -9,6 +9,7 @@ use anyhow::{ensure, Context, Result};
 use bzip2::read::BzDecoder;
 use chromeos_update_engine::install_operation::Type;
 use chromeos_update_engine::{DeltaArchiveManifest, InstallOperation};
+use indicatif::{MultiProgress, ProgressBar, ProgressFinish, ProgressStyle};
 use lzma::LzmaReader;
 use memmap2::{Mmap, MmapMut};
 use prost::Message;
@@ -18,7 +19,6 @@ use std::io::{self, Read};
 use std::ops::{Div, Mul};
 use std::path::Path;
 use std::slice;
-use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 use sync_unsafe_cell::SyncUnsafeCell;
 
@@ -86,6 +86,7 @@ fn main() -> Result<()> {
     let block_size = manifest.block_size.context("block_size not defined")? as usize;
 
     rayon::scope(|scope| -> Result<()> {
+        let multiprogress = MultiProgress::new();
         for update in manifest.partitions {
             let partition_path = &format!("tmp/{}.img", update.partition_name);
             let partition_len = update
@@ -97,8 +98,22 @@ fn main() -> Result<()> {
                 partition_len,
             )?));
 
+            let finish = ProgressFinish::AndLeave;
+            let style = ProgressStyle::with_template(
+                "{prefix:>16!.green.bold} [{wide_bar:.white.dim}] {percent:>3.white}%",
+            )
+            .expect("unable to build progress bar template")
+            .progress_chars("=> ");
+            let progress = ProgressBar::new(update.operations.len() as u64)
+                .with_finish(finish)
+                .with_prefix(update.partition_name)
+                .with_style(style);
+            let progress = multiprogress.add(progress);
+
             for op in update.operations {
                 let partition = Arc::clone(&partition);
+                let progress = progress.clone();
+
                 scope.spawn(move |_| {
                     let data_len = op.data_length.expect("data_length not defined") as usize;
                     let mut data = {
@@ -138,6 +153,8 @@ fn main() -> Result<()> {
                         Some(op) => panic!("unimplemented operation: {op:?}"),
                         None => panic!("invalid op"),
                     };
+
+                    progress.inc(1);
                 });
             }
         }
