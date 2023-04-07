@@ -18,25 +18,23 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            target: x86_64-unknown-linux-musl
-            deb: true
+            target: x86_64-unknown-linux-gnu
+              # - os: ubuntu-latest
+              #   target: arm-unknown-linux-gnueabihf
           - os: ubuntu-latest
-            target: arm-unknown-linux-musleabihf
+            target: armv7-unknown-linux-gnueabihf
           - os: ubuntu-latest
-            target: armv7-unknown-linux-musleabihf
-          - os: ubuntu-latest
-            target: aarch64-unknown-linux-musl
-            deb: true
+            target: aarch64-unknown-linux-gnu
 
           - os: macos-11
             target: x86_64-apple-darwin
-          - os: macos-11
-            target: aarch64-apple-darwin
+              # - os: macos-11
+              #   target: aarch64-apple-darwin
 
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-          - os: windows-latest
-            target: aarch64-pc-windows-msvc
+              # - os: windows-latest
+              #   target: x86_64-pc-windows-msvc
+              # - os: windows-latest
+              #   target: aarch64-pc-windows-msvc
     steps:
       - name: Checkout repository
         uses: actions/checkout@dc323e67f16fb5f7663d20ff7941f27f5809e9b6 # v2.6.0
@@ -63,6 +61,10 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
+      - name: Install build deps for macos
+        if: runner.os == 'macOS'
+        run: brew install xz protobuf
+
       - name: Build binary
         uses: actions-rs/cargo@844f36862e911db73fe0815f00a4a2602c279505 # v1.0.3
         with:
@@ -70,13 +72,12 @@ jobs:
           args: --release --locked --target=${{ matrix.target }} --color=always --verbose
           use-cross: ${{ runner.os == 'Linux' }}
 
-      - name: Package (*nix)
+      - name: Package for (*nix)
         if: runner.os != 'Windows'
         run: >
           tar -cv
           LICENSE README.md
-          man/
-          -C contrib/ completions/ -C ../
+          -C ../
           -C target/${{ matrix.target }}/release/ otadump
           | gzip --best
           > 'otadump-${{ steps.get_version.outputs.value }}-${{ matrix.target }}.tar.gz'

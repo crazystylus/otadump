@@ -24,7 +24,7 @@ indicatif = "0.17.3"
 memmap2 = "0.5.10"
 prost = "0.11.8"
 rayon = "1.7.0"
-rust-lzma = "0.5.1"
+rust-lzma = { git = "https://github.com/crazystylus/rust-lzma", branch = "feat-static-linking", version = "0.5.1", features = ["static"] }
 sha2 = "0.10.6"
 sync-unsafe-cell = "0.1.0"
 
