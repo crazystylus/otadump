@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.69"
 bzip2 = "0.4.4"
+chrono = "0.4.24"
 clap = { version = "4.2.1", features = ["derive"] }
 hex = "0.4.3"
 indicatif = "0.17.3"

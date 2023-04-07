@@ -1,26 +1,26 @@
-use anyhow::{ensure, Context, Result};
+use anyhow::{bail, ensure, Context, Result};
 use bzip2::read::BzDecoder;
+use chrono::Utc;
 use clap::{Parser, ValueHint};
 use indicatif::{MultiProgress, ProgressBar, ProgressFinish, ProgressStyle};
 use lzma::LzmaReader;
 use memmap2::{Mmap, MmapMut};
 use prost::Message;
+use rayon::{ThreadPool, ThreadPoolBuilder};
 use sha2::{Digest, Sha256};
 use sync_unsafe_cell::SyncUnsafeCell;
 
-use std::{
-    fs::{self, File, OpenOptions},
-    io::{self, Read},
-    ops::{Div, Mul},
-    path::{Path, PathBuf},
-    slice,
-    sync::Arc,
-};
+use std::borrow::Cow;
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, Read};
+use std::ops::{Div, Mul};
+use std::path::{Path, PathBuf};
+use std::slice;
+use std::sync::Arc;
 
-use crate::{
-    chromeos_update_engine::{install_operation::Type, DeltaArchiveManifest, InstallOperation},
-    payload::Payload,
-};
+use crate::chromeos_update_engine::install_operation::Type;
+use crate::chromeos_update_engine::{DeltaArchiveManifest, InstallOperation, PartitionUpdate};
+use crate::payload::Payload;
 
 #[derive(Debug, Parser)]
 #[clap(
@@ -42,13 +42,21 @@ pub struct Cmd {
 
     /// Set output directory
     #[clap(long, short, value_hint = ValueHint::DirPath, value_name = "PATH")]
-    output: Option<PathBuf>,
+    output_dir: Option<PathBuf>,
+
+    /// Dump only selected partitions (comma-separated)
+    #[clap(long, value_delimiter = ',', value_name = "PARTITIONS")]
+    partitions: Vec<String>,
+
+    /// Skip input file verification (dangerous!)
+    #[clap(long)]
+    no_verify: bool,
 }
 
 impl Cmd {
     pub fn run(&self) -> Result<()> {
-        let payload = payload_mmap(&self.payload)?;
-        let payload = Payload::parse(&payload).context("unable to parse payload")?;
+        let payload = self.open_payload_file()?;
+        let payload = &Payload::parse(&payload).context("unable to parse payload")?;
         ensure!(
             payload.magic_bytes == b"CrAU",
             "invalid magic bytes: {}",
@@ -59,82 +67,33 @@ impl Cmd {
             DeltaArchiveManifest::decode(payload.manifest).context("unable to parse manifest")?;
         let block_size = manifest.block_size.context("block_size not defined")? as usize;
 
-        let partition_dir = match &self.output {
-            Some(dir) => dir,
-            None => todo!(),
-        };
-        fs::create_dir_all(partition_dir)
-            .with_context(|| format!("could not create output directory: {partition_dir:?}"))?;
+        for partition in &self.partitions {
+            if !manifest.partitions.iter().any(|p| &p.partition_name == partition) {
+                bail!("partition \"{}\" not found in manifest", partition);
+            }
+        }
 
-        rayon::scope(|scope| -> Result<()> {
+        let partition_dir = self.create_partition_dir()?;
+        let partition_dir = partition_dir.as_ref();
+
+        let threadpool = self.get_threadpool()?;
+        threadpool.scope(|scope| -> Result<()> {
             let multiprogress = MultiProgress::new();
-            for update in manifest.partitions {
-                let partition_len = update
-                    .new_partition_info
-                    .and_then(|info| info.size)
-                    .context("unable to determine output file size")?;
-                let partition = {
-                    let filename = Path::new(&update.partition_name).with_extension("img");
-                    let path = partition_dir.join(filename);
-                    Arc::new(SyncUnsafeCell::new(partition_mmap(path, partition_len)?))
-                };
+            for update in manifest.partitions.iter().filter(|update| {
+                self.partitions.is_empty() || self.partitions.contains(&update.partition_name)
+            }) {
+                let progress_bar = self.create_progress_bar(update)?;
+                let progress_bar = multiprogress.add(progress_bar);
 
-                let finish = ProgressFinish::AndLeave;
-                let style = ProgressStyle::with_template(
-                    "{prefix:>16!.green.bold} [{wide_bar:.white.dim}] {percent:>3.white}%",
-                )
-                .expect("unable to build progress bar template")
-                .progress_chars("=> ");
-                let progress = ProgressBar::new(update.operations.len() as u64)
-                    .with_finish(finish)
-                    .with_prefix(update.partition_name)
-                    .with_style(style);
-                let progress = multiprogress.add(progress);
-
-                for op in update.operations {
+                let (partition, partition_len) = self.open_partition_file(update, partition_dir)?;
+                for op in update.operations.iter() {
+                    let progress = progress_bar.clone();
                     let partition = Arc::clone(&partition);
-                    let progress = progress.clone();
 
                     scope.spawn(move |_| {
-                        let data_len = op.data_length.expect("data_length not defined") as usize;
-                        let mut data = {
-                            let offset = op.data_offset.expect("data_offset not defined") as usize;
-                            payload
-                                .data
-                                .get(offset..offset + data_len)
-                                .expect("data offset exceeds payload size")
-                        };
-
-                        if let Some(hash) = &op.data_sha256_hash {
-                            verify_sha256(data, hash).unwrap();
-                        }
-
                         let partition = unsafe { (*partition.get()).as_mut_ptr() };
-                        let mut dst_extents =
-                            extract_dst_extents(&op, partition, partition_len as usize, block_size)
-                                .expect("error extracting dst_extents");
-
-                        match Type::from_i32(op.r#type) {
-                            Some(Type::Replace) => {
-                                op_replace(&mut data, &mut dst_extents, block_size)
-                                    .expect("error in REPLACE operation");
-                            }
-                            Some(Type::ReplaceBz) => {
-                                let mut decoder = BzDecoder::new(data);
-                                op_replace(&mut decoder, &mut dst_extents, block_size)
-                                    .expect("error in REPLACE_BZ operation");
-                            }
-                            Some(Type::ReplaceXz) => {
-                                let mut decoder = LzmaReader::new_decompressor(data)
-                                    .expect("unable to initialize lzma decoder");
-                                op_replace(&mut decoder, &mut dst_extents, block_size)
-                                    .expect("error in REPLACE_XZ operation");
-                            }
-                            Some(Type::Zero) => {} // This is a no-op since the partition is already zeroed
-                            Some(op) => panic!("unimplemented operation: {op:?}"),
-                            None => panic!("invalid op"),
-                        };
-
+                        self.run_op(op, payload, partition, partition_len as usize, block_size)
+                            .expect("error running operation");
                         progress.inc(1);
                     });
                 }
@@ -142,102 +101,211 @@ impl Cmd {
             Ok(())
         })
     }
-}
 
-/// Read as much as possible from a reader into a buffer.
-fn read_all(reader: &mut impl Read, buf: &mut [u8]) -> io::Result<usize> {
-    let mut total_read = 0;
-    while total_read < buf.len() {
-        match reader.read(&mut buf[total_read..]) {
-            Ok(0) => break,
-            Ok(n) => total_read += n,
-            Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
-            Err(e) => return Err(e),
+    fn create_progress_bar(&self, update: &PartitionUpdate) -> Result<ProgressBar> {
+        let finish = ProgressFinish::AndLeave;
+        let style = ProgressStyle::with_template(
+            "{prefix:>16!.green.bold} [{wide_bar:.white.dim}] {percent:>3.white}%",
+        )
+        .context("unable to build progress bar template")?
+        .progress_chars("=> ");
+        let bar = ProgressBar::new(update.operations.len() as u64)
+            .with_finish(finish)
+            .with_prefix(update.partition_name.to_string())
+            .with_style(style);
+        Ok(bar)
+    }
+
+    fn run_op(
+        &self,
+        op: &InstallOperation,
+        payload: &Payload,
+        partition: *mut u8,
+        partition_len: usize,
+        block_size: usize,
+    ) -> Result<()> {
+        let data_len = op.data_length.context("data_length not defined")? as usize;
+        let mut data = {
+            let offset = op.data_offset.context("data_offset not defined")? as usize;
+            payload
+                .data
+                .get(offset..offset + data_len)
+                .context("data offset exceeds payload size")?
+        };
+        match &op.data_sha256_hash {
+            Some(hash) if !self.no_verify => {
+                self.verify_sha256(data, hash)?;
+            }
+            _ => {}
+        }
+
+        let mut dst_extents = self
+            .extract_dst_extents(op, partition, partition_len, block_size)
+            .context("error extracting dst_extents")?;
+
+        match Type::from_i32(op.r#type) {
+            Some(Type::Replace) => self
+                .run_op_replace(&mut data, &mut dst_extents, block_size)
+                .context("error in REPLACE operation"),
+            Some(Type::ReplaceBz) => {
+                let mut decoder = BzDecoder::new(data);
+                self.run_op_replace(&mut decoder, &mut dst_extents, block_size)
+                    .context("error in REPLACE_BZ operation")
+            }
+            Some(Type::ReplaceXz) => {
+                let mut decoder = LzmaReader::new_decompressor(data)
+                    .context("unable to initialize lzma decoder")?;
+                self.run_op_replace(&mut decoder, &mut dst_extents, block_size)
+                    .context("error in REPLACE_XZ operation")
+            }
+            Some(Type::Zero) => Ok(()), // This is a no-op since the partition is already zeroed
+            Some(op) => bail!("unimplemented operation: {op:?}"),
+            None => bail!("invalid operation"),
         }
     }
-    Ok(total_read)
-}
 
-fn op_replace(
-    reader: &mut impl Read,
-    dst_extents: &mut [&mut [u8]],
-    block_size: usize,
-) -> Result<()> {
-    let mut bytes_read = 0usize;
+    fn run_op_replace(
+        &self,
+        reader: &mut impl Read,
+        dst_extents: &mut [&mut [u8]],
+        block_size: usize,
+    ) -> Result<()> {
+        let mut bytes_read = 0usize;
 
-    let dst_len = dst_extents.iter().map(|extent| extent.len()).sum::<usize>();
-    let (dst_extents_last, dst_extents) = dst_extents.split_last_mut().unwrap();
+        let dst_len = dst_extents.iter().map(|extent| extent.len()).sum::<usize>();
+        let (dst_extents_last, dst_extents) = dst_extents.split_last_mut().unwrap();
 
-    for extent in dst_extents.iter_mut() {
-        reader.read_exact(extent).expect("failed to write to buffer");
-        bytes_read += extent.len();
+        for extent in dst_extents.iter_mut() {
+            reader.read_exact(extent).context("failed to write to buffer")?;
+            bytes_read += extent.len();
+        }
+        bytes_read += self
+            .read_exact_best_effort(reader, dst_extents_last)
+            .context("failed to write to buffer")?;
+
+        ensure!(reader.bytes().next().is_none(), "read fewer bytes than expected");
+
+        // Align number of bytes read to block size. The formula for alignment is:
+        // ((operand + alignment - 1) / alignment) * alignment
+        let bytes_read_aligned = (bytes_read + block_size - 1).div(block_size).mul(block_size);
+        ensure!(bytes_read_aligned == dst_len, "more dst blocks than data, even with padding");
+
+        Ok(())
     }
-    bytes_read += read_all(reader, dst_extents_last).expect("failed to write to buffer");
 
-    ensure!(reader.bytes().next().is_none(), "read fewer bytes than expected");
+    fn open_payload_file(&self) -> Result<Mmap> {
+        let path = &self.payload;
+        let file = File::open(path)
+            .with_context(|| format!("unable to open file for reading: {path:?}"))?;
+        unsafe { Mmap::map(&file) }.with_context(|| format!("failed to mmap file: {path:?}"))
+    }
 
-    // Align number of bytes read to block size. The formula for alignment is:
-    // ((operand + alignment - 1) / alignment) * alignment
-    let bytes_read_aligned = (bytes_read + block_size - 1).div(block_size).mul(block_size);
-    ensure!(bytes_read_aligned == dst_len, "more dst blocks than data, even with padding");
+    fn open_partition_file(
+        &self,
+        update: &PartitionUpdate,
+        partition_dir: impl AsRef<Path>,
+    ) -> Result<(Arc<SyncUnsafeCell<MmapMut>>, u64)> {
+        let partition_len = update
+            .new_partition_info
+            .iter()
+            .flat_map(|info| info.size)
+            .next()
+            .context("unable to determine output file size")?;
 
-    Ok(())
-}
+        let filename = Path::new(&update.partition_name).with_extension("img");
+        let path = &partition_dir.as_ref().join(filename);
 
-fn payload_mmap(path: impl AsRef<Path>) -> Result<Mmap> {
-    let path = path.as_ref();
-    let file =
-        File::open(path).with_context(|| format!("unable to open file for reading: {path:?}"))?;
-    unsafe { Mmap::map(&file) }.with_context(|| format!("failed to mmap file: {path:?}"))
-}
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .with_context(|| format!("unable to open file for writing: {path:?}"))?;
+        file.set_len(partition_len)?;
+        let mmap = unsafe { MmapMut::map_mut(&file) }
+            .with_context(|| format!("failed to mmap file: {path:?}"))?;
 
-fn partition_mmap(path: impl AsRef<Path>, len: u64) -> Result<MmapMut> {
-    let path = path.as_ref();
-    let file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create_new(true)
-        .open(path)
-        .with_context(|| format!("unable to open file for writing: {path:?}"))?;
-    file.set_len(len)?;
-    unsafe { MmapMut::map_mut(&file) }.with_context(|| format!("failed to mmap file: {path:?}"))
-}
+        let partition = Arc::new(SyncUnsafeCell::new(mmap));
+        Ok((partition, partition_len))
+    }
 
-fn extract_dst_extents(
-    op: &InstallOperation,
-    partition: *mut u8,
-    partition_len: usize,
-    block_size: usize,
-) -> Result<Vec<&'static mut [u8]>> {
-    op.dst_extents
-        .iter()
-        .map(|extent| {
-            let start_block =
-                extent.start_block.context("start_block not defined in extent")? as usize;
-            let num_blocks =
-                extent.num_blocks.context("num_blocks not defined in extent")? as usize;
+    fn extract_dst_extents(
+        &self,
+        op: &InstallOperation,
+        partition: *mut u8,
+        partition_len: usize,
+        block_size: usize,
+    ) -> Result<Vec<&'static mut [u8]>> {
+        op.dst_extents
+            .iter()
+            .map(|extent| {
+                let start_block =
+                    extent.start_block.context("start_block not defined in extent")? as usize;
+                let num_blocks =
+                    extent.num_blocks.context("num_blocks not defined in extent")? as usize;
 
-            let partition_offset = start_block * block_size;
-            let extent_len = num_blocks * block_size;
+                let partition_offset = start_block * block_size;
+                let extent_len = num_blocks * block_size;
 
-            ensure!(
-                partition_offset + extent_len <= partition_len,
-                "extent exceeds partition size"
-            );
-            let extent =
-                unsafe { slice::from_raw_parts_mut(partition.add(partition_offset), extent_len) };
+                ensure!(
+                    partition_offset + extent_len <= partition_len,
+                    "extent exceeds partition size"
+                );
+                let extent = unsafe {
+                    slice::from_raw_parts_mut(partition.add(partition_offset), extent_len)
+                };
 
-            Ok(extent)
-        })
-        .collect()
-}
+                Ok(extent)
+            })
+            .collect()
+    }
 
-fn verify_sha256(data: &[u8], exp_hash: &[u8]) -> Result<()> {
-    let got_hash = Sha256::digest(data);
-    ensure!(
-        got_hash.as_slice() == exp_hash,
-        "hash mismatch: expected {}, got {got_hash:x}",
-        hex::encode(exp_hash)
-    );
-    Ok(())
+    fn verify_sha256(&self, data: &[u8], exp_hash: &[u8]) -> Result<()> {
+        let got_hash = Sha256::digest(data);
+        ensure!(
+            got_hash.as_slice() == exp_hash,
+            "hash mismatch: expected {}, got {got_hash:x}",
+            hex::encode(exp_hash)
+        );
+        Ok(())
+    }
+
+    /// Read as much as possible from a reader into a buffer.
+    /// This is similar to [`Read::read_exact`], but does not error out when the
+    /// buffer is full.
+    fn read_exact_best_effort(&self, reader: &mut impl Read, buf: &mut [u8]) -> io::Result<usize> {
+        let mut bytes_read = 0;
+        while bytes_read < buf.len() {
+            match reader.read(&mut buf[bytes_read..]) {
+                Ok(0) => break,
+                Ok(n) => bytes_read += n,
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(bytes_read)
+    }
+
+    fn create_partition_dir(&self) -> Result<Cow<PathBuf>> {
+        let dir = match &self.output_dir {
+            Some(dir) => Cow::Borrowed(dir),
+            None => {
+                let now = Utc::now();
+                let parent = self.payload.parent().context("please specify --output-dir")?;
+                let filename = format!("{}", now.format("extracted_%Y%m%d_%H%M%S"));
+                Cow::Owned(parent.join(filename))
+            }
+        };
+        fs::create_dir_all(dir.as_ref())
+            .with_context(|| format!("could not create output directory: {dir:?}"))?;
+        Ok(dir)
+    }
+
+    fn get_threadpool(&self) -> Result<ThreadPool> {
+        let concurrency = self.concurrency.unwrap_or(0);
+        ThreadPoolBuilder::new()
+            .num_threads(concurrency)
+            .build()
+            .context("unable to start threadpool")
+    }
 }
