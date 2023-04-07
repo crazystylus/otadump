@@ -1,9 +1,7 @@
-extern crate prost_build;
-
 fn main() {
     prost_build::compile_protos(
-        &["src/chromeos_update_engine/update_metadata.proto"],
-        &["src/chromeos_update_engine/"],
+        &["src/protos/chromeos_update_engine/update_metadata.proto"],
+        &["src/protos/"],
     )
-    .unwrap();
+    .expect("error compiling protobuf files");
 }

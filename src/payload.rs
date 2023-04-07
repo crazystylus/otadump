@@ -1,3 +1,5 @@
+use std::mem;
+
 use anyhow::{Context, Result};
 
 /// Update file format: contains all the operations needed to update a system to
@@ -24,68 +26,39 @@ pub struct Payload<'a> {
 }
 
 impl<'a> Payload<'a> {
+    // FIXME: use nom-derive for parsing once issue is resolved:
+    // https://github.com/rust-bakery/nom-derive/issues/58
     pub fn parse(bytes: &'a [u8]) -> Result<Self> {
-        const MAGIC_BYTES_LEN: usize = 4;
-        const FILE_FORMAT_VERSION_LEN: usize = 8;
-        const MANIFEST_SIZE_LEN: usize = 8;
-        const METADATA_SIGNATURE_SIZE_LEN: usize = 4;
+        let (magic_bytes, offset) =
+            Self::get_bytes(bytes, 0, 4).context("invalid file format: magic_bytes not found")?;
 
-        let mut offset = 0;
+        let (file_format_version, offset) = Self::get_u64(bytes, offset)
+            .context("invalid file format: file_format_version not found")?;
 
-        let magic_bytes = bytes
-            .get(offset..offset + MAGIC_BYTES_LEN)
-            .context("invalid file format")?;
-        offset += MAGIC_BYTES_LEN;
+        let (manifest_size, offset) =
+            Self::get_u64(bytes, offset).context("invalid file format: manifest_size not found")?;
 
-        let file_format_version = {
-            let bytes = bytes
-                .get(offset..offset + FILE_FORMAT_VERSION_LEN)
-                .context("invalid file format")?
-                .try_into()
-                .expect("incorrect size for file_format_version");
-            offset += FILE_FORMAT_VERSION_LEN;
-            u64::from_be_bytes(bytes)
-        };
-
-        let manifest_size = {
-            let bytes = bytes
-                .get(offset..offset + MANIFEST_SIZE_LEN)
-                .context("invalid file format")?
-                .try_into()
-                .expect("incorrect size for manifest_size");
-            offset += MANIFEST_SIZE_LEN;
-            u64::from_be_bytes(bytes)
-        };
-
-        let metadata_signature_size = if file_format_version > 1 {
-            let bytes = bytes
-                .get(offset..offset + METADATA_SIGNATURE_SIZE_LEN)
-                .context("invalid file format")?
-                .try_into()
-                .expect("incorrect size for metadata_signature");
-            offset += METADATA_SIGNATURE_SIZE_LEN;
-            Some(u32::from_be_bytes(bytes))
+        let (metadata_signature_size, offset) = if file_format_version > 1 {
+            let (value, offset) = Self::get_u32(bytes, offset)
+                .context("invalid file format: manifest_size not found")?;
+            (Some(value), offset)
         } else {
-            None
+            (None, offset)
         };
 
-        let manifest = bytes
-            .get(offset..offset + manifest_size as usize)
-            .context("invalid file format")?;
-        offset += manifest_size as usize;
+        let (manifest, offset) = Self::get_bytes(bytes, offset, manifest_size as usize)
+            .context("invalid file format: manifest not found")?;
 
-        let metadata_signature = match metadata_signature_size {
-            Some(metadata_signature_size) => {
-                let metadata_signature = bytes
-                    .get(offset..offset + metadata_signature_size as usize)
-                    .context("invalid file format")?;
-                offset += metadata_signature_size as usize;
-                Some(metadata_signature)
+        let (metadata_signature, offset) = match metadata_signature_size {
+            Some(len) => {
+                let (value, offset) = Self::get_bytes(bytes, offset, len as usize)
+                    .context("invalid file format: metadata_signature not found")?;
+                (Some(value), offset)
             }
-            None => None,
+            None => (None, offset),
         };
 
-        let data = bytes.get(offset..).context("invalid file format")?;
+        let data = bytes.get(offset..).context("invalid file format: data not found")?;
 
         let payload = Self {
             magic_bytes,
@@ -97,5 +70,22 @@ impl<'a> Payload<'a> {
             data,
         };
         Ok(payload)
+    }
+
+    fn get_bytes(bytes: &[u8], offset: usize, len: usize) -> Option<(&[u8], usize)> {
+        let bytes = bytes.get(offset..offset + len)?;
+        Some((bytes, offset + len))
+    }
+
+    fn get_u64(bytes: &[u8], offset: usize) -> Option<(u64, usize)> {
+        const LEN: usize = mem::size_of::<u64>();
+        let bytes = bytes.get(offset..offset + LEN)?.try_into().expect("wrong slice length");
+        Some((u64::from_be_bytes(bytes), offset + LEN))
+    }
+
+    fn get_u32(bytes: &[u8], offset: usize) -> Option<(u32, usize)> {
+        const LEN: usize = mem::size_of::<u32>();
+        let bytes = bytes.get(offset..offset + LEN)?.try_into().expect("wrong slice length");
+        Some((u32::from_be_bytes(bytes), offset + LEN))
     }
 }
