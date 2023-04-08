@@ -72,6 +72,12 @@ jobs:
         if: runner.os == 'Windows'
         uses: lukka/get-cmake@latest
 
+      - name: Install protoc on windows
+        if: runner.os == 'Windows'
+        uses: arduino/setup-protoc@v1
+        with:
+          version: '3.x'
+
       - name: Install vcpkg on windows
         if: runner.os == 'Windows'
         uses: lukka/run-vcpkg@v11
@@ -105,8 +111,6 @@ jobs:
         run: >
           7z a 'otadump-${{ steps.get_version.outputs.value }}-${{ matrix.target }}.zip'
           LICENSE README.md
-          ./man/
-          ./contrib/completions/
           ./target/${{ matrix.target }}/release/otadump.exe
       - name: Upload artifact
         uses: actions/upload-artifact@82c141cc518b40d92cc801eee768e7aafc9c2fa2 # v2.3.1

@@ -846,9 +846,10 @@ checksum = "f162c6dd7b008981e4d40210aca20b4bd0f9b60ca9271061b07f78537722f2e1"
 [[package]]
 name = "rust-lzma"
 version = "0.5.1"
-source = "git+https://github.com/crazystylus/rust-lzma?branch=feat-static-linking#84bf06381f155f96ef04a6fd7b08844091860b0b"
+source = "git+https://github.com/crazystylus/rust-lzma?branch=feat-static-linking#f939b8bc7577781f946bb2f70fb1fabe512eedcf"
 dependencies = [
  "pkg-config",
+ "vcpkg",
 ]
 
 [[package]]
@@ -984,6 +985,12 @@ name = "utf8parse"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "711b9620af191e0cdc7468a8d14e709c3dcdb115b36f838e601583af800a370a"
+
+[[package]]
+name = "vcpkg"
+version = "0.2.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 
 [[package]]
 name = "version_check"
