@@ -117,7 +117,7 @@ get_architecture() {
     local _ostype _cputype _bitness _arch _clibtype
     _ostype="$(uname -s)"
     _cputype="$(uname -m)"
-    _clibtype="musl"
+    _clibtype="gnu"
 
     if [ "$_ostype" = Linux ]; then
         if [ "$(uname -o)" = Android ]; then
@@ -245,7 +245,7 @@ get_architecture() {
     esac
 
     # Detect 64-bit linux with 32-bit userland
-    if [ "${_ostype}" = unknown-linux-musl ] && [ "${_bitness}" -eq 32 ]; then
+    if [ "${_ostype}" = unknown-linux-gnu ] && [ "${_bitness}" -eq 32 ]; then
         case $_cputype in
         x86_64)
             # 32-bit executable for amd64 = x32
@@ -279,7 +279,7 @@ get_architecture() {
     # Detect armv7 but without the CPU features Rust needs in that build,
     # and fall back to arm.
     # See https://github.com/rust-lang/rustup.rs/issues/587.
-    if [ "$_ostype" = "unknown-linux-musleabihf" ] && [ "$_cputype" = armv7 ]; then
+    if [ "$_ostype" = "unknown-linux-gnueabihf" ] && [ "$_cputype" = armv7 ]; then
         if ensure grep '^Features' /proc/cpuinfo | grep -q -v neon; then
             # At least one processor does not have NEON.
             _cputype=arm
