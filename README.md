@@ -8,7 +8,6 @@
 # otadump
 
 [![crates.io][crates.io-badge]][crates.io]
-[![Downloads][downloads-badge]][releases]
 
 **`otadump` helps you extract partitions from Android OTA files.** <br />
 Partitions can be individually flashed to your device using `fastboot`.
@@ -59,7 +58,6 @@ Comparing the time taken to extract all partitions from a few sample files
 [crates.io-badge]: https://img.shields.io/crates/v/otadump?logo=rust&logoColor=white&style=flat-square
 [crates.io]: https://crates.io/crates/otadump
 [crazystylus/otadump]: https://github.com/crazystylus/otadump
-[downloads-badge]: https://img.shields.io/github/downloads/crazystylus/otadump/total?logo=github&logoColor=white&style=flat-square
 [extraction-issue]: https://github.com/vm03/payload_dumper/issues/52
 [releases]: https://github.com/crazystylus/otadump/releases
 [sd2a.220601.003]: https://dl.google.com/dl/android/aosp/bluejay-ota-sd2a.220601.003-ddfde1f7.zip
