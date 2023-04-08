@@ -92,7 +92,7 @@ impl Cmd {
 
                     scope.spawn(move |_| {
                         let partition = unsafe { (*partition.get()).as_mut_ptr() };
-                        self.run_op(op, payload, partition, partition_len as usize, block_size)
+                        self.run_op(op, payload, partition, partition_len, block_size)
                             .expect("error running operation");
                         progress.inc(1);
                     });
@@ -173,16 +173,9 @@ impl Cmd {
         let mut bytes_read = 0usize;
 
         let dst_len = dst_extents.iter().map(|extent| extent.len()).sum::<usize>();
-        let (dst_extents_last, dst_extents) = dst_extents.split_last_mut().unwrap();
-
         for extent in dst_extents.iter_mut() {
-            reader.read_exact(extent).context("failed to write to buffer")?;
-            bytes_read += extent.len();
+            bytes_read += io::copy(reader, extent).context("failed to write to buffer")? as usize;
         }
-        bytes_read += self
-            .read_exact_best_effort(reader, dst_extents_last)
-            .context("failed to write to buffer")?;
-
         ensure!(reader.bytes().next().is_none(), "read fewer bytes than expected");
 
         // Align number of bytes read to block size. The formula for alignment is:
@@ -204,7 +197,7 @@ impl Cmd {
         &self,
         update: &PartitionUpdate,
         partition_dir: impl AsRef<Path>,
-    ) -> Result<(Arc<SyncUnsafeCell<MmapMut>>, u64)> {
+    ) -> Result<(Arc<SyncUnsafeCell<MmapMut>>, usize)> {
         let partition_len = update
             .new_partition_info
             .iter()
@@ -226,7 +219,7 @@ impl Cmd {
             .with_context(|| format!("failed to mmap file: {path:?}"))?;
 
         let partition = Arc::new(SyncUnsafeCell::new(mmap));
-        Ok((partition, partition_len))
+        Ok((partition, partition_len as usize))
     }
 
     fn extract_dst_extents(
@@ -268,22 +261,6 @@ impl Cmd {
             hex::encode(exp_hash)
         );
         Ok(())
-    }
-
-    /// Read as much as possible from a reader into a buffer.
-    /// This is similar to [`Read::read_exact`], but does not error out when the
-    /// buffer is full.
-    fn read_exact_best_effort(&self, reader: &mut impl Read, buf: &mut [u8]) -> io::Result<usize> {
-        let mut bytes_read = 0;
-        while bytes_read < buf.len() {
-            match reader.read(&mut buf[bytes_read..]) {
-                Ok(0) => break,
-                Ok(n) => bytes_read += n,
-                Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
-                Err(e) => return Err(e),
-            }
-        }
-        Ok(bytes_read)
     }
 
     fn create_partition_dir(&self) -> Result<Cow<PathBuf>> {
