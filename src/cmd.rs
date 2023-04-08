@@ -1,3 +1,11 @@
+use std::borrow::Cow;
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, Read};
+use std::ops::{Div, Mul};
+use std::path::{Path, PathBuf};
+use std::slice;
+use std::sync::Arc;
+
 use anyhow::{bail, ensure, Context, Result};
 use bzip2::read::BzDecoder;
 use chrono::Utc;
@@ -9,14 +17,6 @@ use prost::Message;
 use rayon::{ThreadPool, ThreadPoolBuilder};
 use sha2::{Digest, Sha256};
 use sync_unsafe_cell::SyncUnsafeCell;
-
-use std::borrow::Cow;
-use std::fs::{self, File, OpenOptions};
-use std::io::{self, Read};
-use std::ops::{Div, Mul};
-use std::path::{Path, PathBuf};
-use std::slice;
-use std::sync::Arc;
 
 use crate::chromeos_update_engine::install_operation::Type;
 use crate::chromeos_update_engine::{DeltaArchiveManifest, InstallOperation, PartitionUpdate};

@@ -5,9 +5,10 @@ mod chromeos_update_engine {
 mod cmd;
 mod payload;
 
-use crate::cmd::Cmd;
 use anyhow::Result;
 use clap::Parser;
+
+use crate::cmd::Cmd;
 
 fn main() -> Result<()> {
     Cmd::parse().run()
