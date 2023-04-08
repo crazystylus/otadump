@@ -3,6 +3,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read};
 use std::ops::{Div, Mul};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::{env, slice};
 
@@ -79,17 +80,34 @@ impl Cmd {
             }) {
                 let progress_bar = self.create_progress_bar(update)?;
                 let progress_bar = multiprogress.add(progress_bar);
+                let (partition_file, partition_len) =
+                    self.open_partition_file(update, partition_dir)?;
+                let remaining_ops = Arc::new(AtomicUsize::new(update.operations.len()));
 
-                let (partition, partition_len) = self.open_partition_file(update, partition_dir)?;
                 for op in update.operations.iter() {
-                    let progress = progress_bar.clone();
-                    let partition = Arc::clone(&partition);
+                    let progress_bar = progress_bar.clone();
+                    let partition_file = Arc::clone(&partition_file);
+                    let remaining_ops = Arc::clone(&remaining_ops);
 
                     scope.spawn(move |_| {
-                        let partition = unsafe { (*partition.get()).as_mut_ptr() };
+                        let partition = unsafe { (*partition_file.get()).as_mut_ptr() };
                         self.run_op(op, payload, partition, partition_len, block_size)
                             .expect("error running operation");
-                        progress.inc(1);
+                        progress_bar.inc(1);
+
+                        // If this is the last operation of the partition,
+                        // verify the output.
+                        if remaining_ops.fetch_sub(1, Ordering::AcqRel) == 1 {
+                            if let Some(hash) = update
+                                .new_partition_info
+                                .as_ref()
+                                .and_then(|info| info.hash.as_ref())
+                            {
+                                let partition = unsafe { (*partition_file.get()).as_ref() };
+                                self.verify_sha256(partition, hash)
+                                    .expect("output verification failed");
+                            }
+                        }
                     });
                 }
             }
@@ -129,7 +147,7 @@ impl Cmd {
         };
         match &op.data_sha256_hash {
             Some(hash) if !self.no_verify => {
-                self.verify_sha256(data, hash)?;
+                self.verify_sha256(data, hash).context("input verification failed")?;
             }
             _ => {}
         }
@@ -195,9 +213,8 @@ impl Cmd {
     ) -> Result<(Arc<SyncUnsafeCell<MmapMut>>, usize)> {
         let partition_len = update
             .new_partition_info
-            .iter()
-            .flat_map(|info| info.size)
-            .next()
+            .as_ref()
+            .and_then(|info| info.size)
             .context("unable to determine output file size")?;
 
         let filename = Path::new(&update.partition_name).with_extension("img");
