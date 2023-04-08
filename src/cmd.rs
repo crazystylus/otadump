@@ -3,8 +3,8 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read};
 use std::ops::{Div, Mul};
 use std::path::{Path, PathBuf};
-use std::slice;
 use std::sync::Arc;
+use std::{env, slice};
 
 use anyhow::{bail, ensure, Context, Result};
 use bzip2::read::BzDecoder;
@@ -263,9 +263,9 @@ impl Cmd {
             Some(dir) => Cow::Borrowed(dir),
             None => {
                 let now = Utc::now();
-                let parent = self.payload.parent().context("please specify --output-dir")?;
+                let current_dir = env::current_dir().context("please specify --output-dir")?;
                 let filename = format!("{}", now.format("extracted_%Y%m%d_%H%M%S"));
-                Cow::Owned(parent.join(filename))
+                Cow::Owned(current_dir.join(filename))
             }
         };
         fs::create_dir_all(dir.as_ref())
