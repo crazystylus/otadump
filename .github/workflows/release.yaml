@@ -1,0 +1,110 @@
+name: release
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+env:
+  CARGO_INCREMENTAL: 0
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+              # - os: ubuntu-latest
+              #   target: arm-unknown-linux-gnueabihf
+          - os: ubuntu-latest
+            target: armv7-unknown-linux-gnueabihf
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+
+          - os: macos-11
+            target: x86_64-apple-darwin
+              # - os: macos-11
+              #   target: aarch64-apple-darwin
+
+              # - os: windows-latest
+              #   target: x86_64-pc-windows-msvc
+              # - os: windows-latest
+              #   target: aarch64-pc-windows-msvc
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@dc323e67f16fb5f7663d20ff7941f27f5809e9b6 # v2.6.0
+        with:
+          fetch-depth: 0
+
+      - name: Get version
+        id: get_version
+        uses: SebRollen/toml-action@2bd04b06a3ebc3e6a3eb6060de115710cad16cd6 # v1.0.2
+        with:
+          file: Cargo.toml
+          field: package.version
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@16499b5e05bf2e26879000db0c1d13f7e13fa3af # v1.0.7
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+          target: ${{ matrix.target }}
+
+      - name: Setup cache
+        uses: Swatinem/rust-cache@81d053bdb0871dcd3f10763c8cc60d0adc41762b # v1
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Install build deps for macos
+        if: runner.os == 'macOS'
+        run: brew install xz protobuf
+
+      - name: Build binary
+        uses: actions-rs/cargo@844f36862e911db73fe0815f00a4a2602c279505 # v1.0.3
+        with:
+          command: build
+          args: --release --locked --target=${{ matrix.target }} --color=always --verbose
+          use-cross: ${{ runner.os == 'Linux' }}
+
+      - name: Package for (*nix)
+        if: runner.os != 'Windows'
+        run: >
+          tar -cv
+          LICENSE README.md
+          -C ../
+          -C target/${{ matrix.target }}/release/ otadump
+          | gzip --best
+          > 'otadump-${{ steps.get_version.outputs.value }}-${{ matrix.target }}.tar.gz'
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        run: >
+          7z a 'otadump-${{ steps.get_version.outputs.value }}-${{ matrix.target }}.zip'
+          LICENSE README.md
+          ./man/
+          ./contrib/completions/
+          ./target/${{ matrix.target }}/release/otadump.exe
+      - name: Upload artifact
+        uses: actions/upload-artifact@82c141cc518b40d92cc801eee768e7aafc9c2fa2 # v2.3.1
+        with:
+          name: ${{ matrix.target }}
+          path: |
+            *.deb
+            *.tar.gz
+            *.zip
+      - name: Create release
+        if: ${{ github.ref == 'refs/heads/main' && startsWith(github.event.head_commit.message, 'chore(release)') }}
+        uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
+        with:
+          draft: true
+          files: |
+            *.deb
+            *.tar.gz
+            *.zip
+          name: ${{ steps.get_version.outputs.value }}
+          tag_name: ""

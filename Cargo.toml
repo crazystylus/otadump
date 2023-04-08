@@ -1,7 +1,18 @@
 [package]
-name = "otadump"
-version = "0.1.0"
+authors = [
+    "Kartik Sharma <kartik.sharma522@gmail.com>",
+    "Ajeet D'Souza <98ajeet@gmail.com>",
+]
+description = "Android OTA payload dumper"
+categories = ["command-line-utilities", "android"]
 edition = "2021"
+keywords = ["android", "cli", "terminal"]
+license = "MIT"
+name = "otadump"
+repository = "https://github.com/crazystylus/otadump"
+readme = "README.md"
+rust-version = "1.68.0"
+version = "0.1.0"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -17,7 +28,7 @@ nom = "7.1.3"
 nom-derive = "0.10.1"
 prost = "0.11.8"
 rayon = "1.7.0"
-rust-lzma = "0.5.1"
+rust-lzma = { git = "https://github.com/crazystylus/rust-lzma", branch = "feat-static-linking", version = "0.5.1", features = ["static"] }
 sha2 = "0.10.6"
 sync-unsafe-cell = "0.1.0"
 
@@ -26,4 +37,6 @@ prost-build = "0.11"
 
 [profile.release]
 codegen-units = 1
+debug = 0
 lto = true
+strip = true
