@@ -1,101 +1,50 @@
-use anyhow::{Context, Result};
+use anyhow::{anyhow, ensure, Result};
+use nom_derive::{NomBE, Parse};
 
 /// Update file format: contains all the operations needed to update a system to
 /// a specific version. It can be a full payload which can update from any
 /// version, or a delta payload which can only update from a specific version.
+#[derive(Debug, NomBE)]
 pub struct Payload<'a> {
-    /// Should be "CrAU"
+    /// Should be "CrAU".
+    #[nom(Take = "4")]
     pub magic_bytes: &'a [u8],
-    /// Payload major version
+
+    /// Payload major version.
     pub file_format_version: u64,
-    /// Size of protobuf [`DeltaArchiveManifest`]
+
+    /// Size of [`DeltaArchiveManifest`].
     pub manifest_size: u64,
-    /// Only present if format_version >= 2
+
+    /// Only present if format_version >= 2.
+    #[nom(If = "file_format_version > 1")]
     pub metadata_signature_size: Option<u32>,
-    // The DeltaArchiveManifest protobuf serialized, not compressed.
+
+    /// This is a serialized [`DeltaArchiveManifest`] message.
+    #[nom(Take = "manifest_size")]
     pub manifest: &'a [u8],
-    // The signature of the metadata (from the beginning of the payload up to
-    // this location, not including the signature itself). This is a serialized
-    // Signatures message.
+
+    /// The signature of the metadata (from the beginning of the payload up to
+    /// this location, not including the signature itself). This is a serialized
+    /// [`Signatures`] message.
+    #[nom(If = "metadata_signature_size.is_some()", Take = "metadata_signature_size.unwrap()")]
     pub metadata_signature: Option<&'a [u8]>,
-    // Data blobs for files, no specific format. The specific offset
-    // and length of each data blob is recorded in the DeltaArchiveManifest.
+
+    /// Data blobs for files, no specific format. The specific offset and length
+    /// of each data blob is recorded in the [`DeltaArchiveManifest`].
+    #[nom(Parse = "::nom::combinator::rest")]
     pub data: &'a [u8],
 }
 
 impl<'a> Payload<'a> {
     pub fn parse(bytes: &'a [u8]) -> Result<Self> {
-        const MAGIC_BYTES_LEN: usize = 4;
-        const FILE_FORMAT_VERSION_LEN: usize = 8;
-        const MANIFEST_SIZE_LEN: usize = 8;
-        const METADATA_SIGNATURE_SIZE_LEN: usize = 4;
-
-        let mut offset = 0;
-
-        let magic_bytes = bytes
-            .get(offset..offset + MAGIC_BYTES_LEN)
-            .context("invalid file format")?;
-        offset += MAGIC_BYTES_LEN;
-
-        let file_format_version = {
-            let bytes = bytes
-                .get(offset..offset + FILE_FORMAT_VERSION_LEN)
-                .context("invalid file format")?
-                .try_into()
-                .expect("incorrect size for file_format_version");
-            offset += FILE_FORMAT_VERSION_LEN;
-            u64::from_be_bytes(bytes)
-        };
-
-        let manifest_size = {
-            let bytes = bytes
-                .get(offset..offset + MANIFEST_SIZE_LEN)
-                .context("invalid file format")?
-                .try_into()
-                .expect("incorrect size for manifest_size");
-            offset += MANIFEST_SIZE_LEN;
-            u64::from_be_bytes(bytes)
-        };
-
-        let metadata_signature_size = if file_format_version > 1 {
-            let bytes = bytes
-                .get(offset..offset + METADATA_SIGNATURE_SIZE_LEN)
-                .context("invalid file format")?
-                .try_into()
-                .expect("incorrect size for metadata_signature");
-            offset += METADATA_SIGNATURE_SIZE_LEN;
-            Some(u32::from_be_bytes(bytes))
-        } else {
-            None
-        };
-
-        let manifest = bytes
-            .get(offset..offset + manifest_size as usize)
-            .context("invalid file format")?;
-        offset += manifest_size as usize;
-
-        let metadata_signature = match metadata_signature_size {
-            Some(metadata_signature_size) => {
-                let metadata_signature = bytes
-                    .get(offset..offset + metadata_signature_size as usize)
-                    .context("invalid file format")?;
-                offset += metadata_signature_size as usize;
-                Some(metadata_signature)
-            }
-            None => None,
-        };
-
-        let data = bytes.get(offset..).context("invalid file format")?;
-
-        let payload = Self {
-            magic_bytes,
-            file_format_version,
-            manifest_size,
-            metadata_signature_size,
-            manifest,
-            metadata_signature,
-            data,
-        };
+        let (_, payload): (_, Payload) = Parse::parse(bytes)
+            .map_err(|e| anyhow!(e.to_string()).context("failed to parse payload"))?;
+        ensure!(
+            payload.magic_bytes == b"CrAU",
+            "invalid magic bytes: {}",
+            hex::encode(payload.magic_bytes)
+        );
         Ok(payload)
     }
 }

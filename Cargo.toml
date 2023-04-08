@@ -18,10 +18,14 @@ version = "0.1.0"
 
 [dependencies]
 anyhow = "1.0.69"
-bzip2 = "0.4.4"
+bzip2 = { version = "0.4.4", features = ["static"] }
+chrono = "0.4.24"
+clap = { version = "4.2.1", features = ["derive"] }
 hex = "0.4.3"
 indicatif = "0.17.3"
 memmap2 = "0.5.10"
+nom = "7.1.3"
+nom-derive = "0.10.1"
 prost = "0.11.8"
 rayon = "1.7.0"
 rust-lzma = { git = "https://github.com/crazystylus/rust-lzma", branch = "feat-static-linking", version = "0.5.1", features = ["static"] }
@@ -29,7 +33,7 @@ sha2 = "0.10.6"
 sync-unsafe-cell = "0.1.0"
 
 [build-dependencies]
-prost-build = { version = "0.11" }
+prost-build = "0.11"
 
 [profile.release]
 codegen-units = 1
