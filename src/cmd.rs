@@ -56,12 +56,7 @@ pub struct Cmd {
 impl Cmd {
     pub fn run(&self) -> Result<()> {
         let payload = self.open_payload_file()?;
-        let payload = &Payload::parse(&payload).context("unable to parse payload")?;
-        ensure!(
-            payload.magic_bytes == b"CrAU",
-            "invalid magic bytes: {}",
-            hex::encode(payload.magic_bytes)
-        );
+        let payload = &Payload::parse(&payload)?;
 
         let manifest =
             DeltaArchiveManifest::decode(payload.manifest).context("unable to parse manifest")?;
