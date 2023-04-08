@@ -31,10 +31,12 @@ jobs:
               # - os: macos-11
               #   target: aarch64-apple-darwin
 
-              # - os: windows-latest
-              #   target: x86_64-pc-windows-msvc
-              # - os: windows-latest
-              #   target: aarch64-pc-windows-msvc
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            triplet: x64-windows-static-md
+          - os: windows-latest
+            target: aarch64-pc-windows-msvc
+            triplet: arm64-windows-static-md
     steps:
       - name: Checkout repository
         uses: actions/checkout@dc323e67f16fb5f7663d20ff7941f27f5809e9b6 # v2.6.0
@@ -64,6 +66,22 @@ jobs:
       - name: Install build deps for macos
         if: runner.os == 'macOS'
         run: brew install xz protobuf
+
+      - name: Install cmake on windows
+        if: runner.os == 'Windows'
+        uses: lukka/get-cmake@latest
+
+      - name: Install vcpkg on windows
+        if: runner.os == 'Windows'
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgDirectory: C:/vcpkg
+          doNotUpdateVcpkg: true
+
+      - name: Install liblzma on windows
+        if: runner.os == 'Windows'
+        run: |
+          ${{ env.RUNVCPKG_VCPKG_ROOT }}/vcpkg.exe install liblzma --triplet ${{ matrix.triplet }}
 
       - name: Build binary
         uses: actions-rs/cargo@844f36862e911db73fe0815f00a4a2602c279505 # v1.0.3
