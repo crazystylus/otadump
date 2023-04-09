@@ -12,7 +12,7 @@ name = "otadump"
 repository = "https://github.com/crazystylus/otadump"
 readme = "README.md"
 rust-version = "1.68.0"
-version = "0.1.0"
+version = "0.1.1"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

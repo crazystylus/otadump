@@ -109,7 +109,7 @@ impl Cmd {
 
                         // If this is the last operation of the partition,
                         // verify the output.
-                        if remaining_ops.fetch_sub(1, Ordering::AcqRel) == 1 {
+                        if !self.no_verify && remaining_ops.fetch_sub(1, Ordering::AcqRel) == 1 {
                             if let Some(hash) = update
                                 .new_partition_info
                                 .as_ref()
