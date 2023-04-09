@@ -11,7 +11,7 @@ use anyhow::{bail, ensure, Context, Result};
 use bzip2::read::BzDecoder;
 use chrono::Utc;
 use clap::{Parser, ValueHint};
-use indicatif::{MultiProgress, ProgressBar, ProgressFinish, ProgressStyle};
+use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressFinish, ProgressStyle};
 use lzma::LzmaReader;
 use memmap2::{Mmap, MmapMut};
 use prost::Message;
@@ -23,12 +23,20 @@ use crate::chromeos_update_engine::install_operation::Type;
 use crate::chromeos_update_engine::{DeltaArchiveManifest, InstallOperation, PartitionUpdate};
 use crate::payload::Payload;
 
+const HELP_TEMPLATE: &str = "\
+{before-help}{name} {version}
+{author-with-newline}{about-with-newline}
+{usage-heading} {usage}
+
+{all-args}{after-help}
+";
+
 #[derive(Debug, Parser)]
 #[clap(
-    bin_name = env!("CARGO_PKG_NAME"),
     about,
     author,
     disable_help_subcommand = true,
+    help_template = HELP_TEMPLATE,
     propagate_version = true,
     version = env!("CARGO_PKG_VERSION"),
 )]
@@ -74,7 +82,11 @@ impl Cmd {
 
         let threadpool = self.get_threadpool()?;
         threadpool.scope(|scope| -> Result<()> {
-            let multiprogress = MultiProgress::new();
+            let multiprogress = {
+                // Setting a fixed update frequence reduces flickering.
+                let draw_target = ProgressDrawTarget::stderr_with_hz(5);
+                MultiProgress::with_draw_target(draw_target)
+            };
             for update in manifest.partitions.iter().filter(|update| {
                 self.partitions.is_empty() || self.partitions.contains(&update.partition_name)
             }) {

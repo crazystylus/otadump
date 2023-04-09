@@ -3,7 +3,7 @@ authors = [
     "Kartik Sharma <kartik.sharma522@gmail.com>",
     "Ajeet D'Souza <98ajeet@gmail.com>",
 ]
-description = "Android OTA payload dumper"
+description = "Extract partitions from Android OTA files"
 categories = ["command-line-utilities", "android"]
 edition = "2021"
 keywords = ["android", "cli", "terminal"]
@@ -28,7 +28,7 @@ nom = "7.1.3"
 nom-derive = "0.10.1"
 prost = "0.11.8"
 rayon = "1.7.0"
-rust-lzma = { git = "https://github.com/crazystylus/rust-lzma", branch = "feat-static-linking", version = "0.5.1", features = ["static"] }
+rust-lzma = { version = "0.6.0", features = ["static"] }
 sha2 = "0.10.6"
 sync-unsafe-cell = "0.1.0"
 

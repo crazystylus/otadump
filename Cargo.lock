@@ -845,8 +845,9 @@ checksum = "f162c6dd7b008981e4d40210aca20b4bd0f9b60ca9271061b07f78537722f2e1"
 
 [[package]]
 name = "rust-lzma"
-version = "0.5.1"
-source = "git+https://github.com/crazystylus/rust-lzma?branch=feat-static-linking#f939b8bc7577781f946bb2f70fb1fabe512eedcf"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d62915608f6cee1d7f2fc00f28b4f058ff79d6e4ec3c2fe0006b09b52437c84"
 dependencies = [
  "pkg-config",
  "vcpkg",
