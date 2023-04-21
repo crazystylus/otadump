@@ -84,7 +84,7 @@ impl Cmd {
         threadpool.scope(|scope| -> Result<()> {
             let multiprogress = {
                 // Setting a fixed update frequence reduces flickering.
-                let draw_target = ProgressDrawTarget::stderr_with_hz(5);
+                let draw_target = ProgressDrawTarget::stderr_with_hz(2);
                 MultiProgress::with_draw_target(draw_target)
             };
             for update in manifest.partitions.iter().filter(|update| {
@@ -149,35 +149,24 @@ impl Cmd {
         partition_len: usize,
         block_size: usize,
     ) -> Result<()> {
-        let data_len = op.data_length.context("data_length not defined")? as usize;
-        let mut data = {
-            let offset = op.data_offset.context("data_offset not defined")? as usize;
-            payload
-                .data
-                .get(offset..offset + data_len)
-                .context("data offset exceeds payload size")?
-        };
-        match &op.data_sha256_hash {
-            Some(hash) if !self.no_verify => {
-                self.verify_sha256(data, hash).context("input verification failed")?;
-            }
-            _ => {}
-        }
-
         let mut dst_extents = self
             .extract_dst_extents(op, partition, partition_len, block_size)
             .context("error extracting dst_extents")?;
 
         match Type::from_i32(op.r#type) {
-            Some(Type::Replace) => self
-                .run_op_replace(&mut data, &mut dst_extents, block_size)
-                .context("error in REPLACE operation"),
+            Some(Type::Replace) => {
+                let mut data = self.extract_data(op, payload).context("error extracting data")?;
+                self.run_op_replace(&mut data, &mut dst_extents, block_size)
+                    .context("error in REPLACE operation")
+            }
             Some(Type::ReplaceBz) => {
+                let data = self.extract_data(op, payload).context("error extracting data")?;
                 let mut decoder = BzDecoder::new(data);
                 self.run_op_replace(&mut decoder, &mut dst_extents, block_size)
                     .context("error in REPLACE_BZ operation")
             }
             Some(Type::ReplaceXz) => {
+                let data = self.extract_data(op, payload).context("error extracting data")?;
                 let mut decoder = LzmaReader::new_decompressor(data)
                     .context("unable to initialize lzma decoder")?;
                 self.run_op_replace(&mut decoder, &mut dst_extents, block_size)
@@ -244,6 +233,24 @@ impl Cmd {
 
         let partition = Arc::new(SyncUnsafeCell::new(mmap));
         Ok((partition, partition_len as usize))
+    }
+
+    fn extract_data<'a>(&self, op: &InstallOperation, payload: &'a Payload) -> Result<&'a [u8]> {
+        let data_len = op.data_length.context("data_length not defined")? as usize;
+        let data = {
+            let offset = op.data_offset.context("data_offset not defined")? as usize;
+            payload
+                .data
+                .get(offset..offset + data_len)
+                .context("data offset exceeds payload size")?
+        };
+        match &op.data_sha256_hash {
+            Some(hash) if !self.no_verify => {
+                self.verify_sha256(data, hash).context("input verification failed")?;
+            }
+            _ => {}
+        }
+        Ok(data)
     }
 
     fn extract_dst_extents(
