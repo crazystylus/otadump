@@ -1,3 +1,4 @@
+#[allow(clippy::all)]
 mod chromeos_update_engine {
     include!(concat!(env!("OUT_DIR"), "/chromeos_update_engine.rs"));
 }
