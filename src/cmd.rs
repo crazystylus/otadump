@@ -84,7 +84,7 @@ impl Cmd {
         threadpool.scope(|scope| -> Result<()> {
             let multiprogress = {
                 // Setting a fixed update frequence reduces flickering.
-                let draw_target = ProgressDrawTarget::stderr_with_hz(5);
+                let draw_target = ProgressDrawTarget::stderr_with_hz(2);
                 MultiProgress::with_draw_target(draw_target)
             };
             for update in manifest.partitions.iter().filter(|update| {
