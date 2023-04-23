@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::cmp::Reverse;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read};
 use std::ops::{Div, Mul};
@@ -11,6 +12,8 @@ use anyhow::{bail, ensure, Context, Result};
 use bzip2::read::BzDecoder;
 use chrono::Utc;
 use clap::{Parser, ValueHint};
+use console::Style;
+use humansize::{format_size, DECIMAL};
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressFinish, ProgressStyle};
 use lzma::LzmaReader;
 use memmap2::{Mmap, MmapMut};
@@ -45,6 +48,17 @@ pub struct Cmd {
     #[clap(value_hint = ValueHint::FilePath, value_name = "PATH")]
     payload: PathBuf,
 
+    /// List partitions instead of extracting them
+    #[clap(
+        conflicts_with = "concurrency",
+        conflicts_with = "output_dir",
+        conflicts_with = "partitions",
+        conflicts_with = "no_verify",
+        long,
+        short
+    )]
+    list: bool,
+
     /// Number of threads to use during extraction
     #[clap(long, short, value_name = "N")]
     concurrency: Option<usize>,
@@ -67,15 +81,37 @@ impl Cmd {
         let payload = self.open_payload_file()?;
         let payload = &Payload::parse(&payload)?;
 
-        let manifest =
+        let mut manifest =
             DeltaArchiveManifest::decode(payload.manifest).context("unable to parse manifest")?;
         let block_size = manifest.block_size.context("block_size not defined")? as usize;
+
+        if self.list {
+            manifest
+                .partitions
+                .sort_unstable_by(|p1, p2| p1.partition_name.cmp(&p2.partition_name));
+            for partition in &manifest.partitions {
+                let size = partition
+                    .new_partition_info
+                    .as_ref()
+                    .and_then(|info| info.size)
+                    .map(|size| format_size(size, DECIMAL));
+                let size = size.as_deref().unwrap_or("???");
+
+                let bold_green = Style::new().bold().green();
+                println!("{} ({size})", bold_green.apply_to(&partition.partition_name));
+            }
+            return Ok(());
+        }
 
         for partition in &self.partitions {
             if !manifest.partitions.iter().any(|p| &p.partition_name == partition) {
                 bail!("partition \"{}\" not found in manifest", partition);
             }
         }
+
+        manifest.partitions.sort_unstable_by_key(|partition| {
+            Reverse(partition.new_partition_info.as_ref().and_then(|info| info.size).unwrap_or(0))
+        });
 
         let partition_dir = self.create_partition_dir()?;
         let partition_dir = partition_dir.as_ref();
