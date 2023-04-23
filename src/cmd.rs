@@ -45,6 +45,17 @@ pub struct Cmd {
     #[clap(value_hint = ValueHint::FilePath, value_name = "PATH")]
     payload: PathBuf,
 
+    /// List partitions instead of extracting them
+    #[clap(
+        conflicts_with = "concurrency",
+        conflicts_with = "output_dir",
+        conflicts_with = "partitions",
+        conflicts_with = "no_verify",
+        long,
+        short
+    )]
+    list: bool,
+
     /// Number of threads to use during extraction
     #[clap(long, short, value_name = "N")]
     concurrency: Option<usize>,
@@ -70,6 +81,13 @@ impl Cmd {
         let manifest =
             DeltaArchiveManifest::decode(payload.manifest).context("unable to parse manifest")?;
         let block_size = manifest.block_size.context("block_size not defined")? as usize;
+
+        if self.list {
+            for partition in &manifest.partitions {
+                println!("{}", partition.partition_name);
+            }
+            return Ok(());
+        }
 
         for partition in &self.partitions {
             if !manifest.partitions.iter().any(|p| &p.partition_name == partition) {
