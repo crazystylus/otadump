@@ -13,7 +13,6 @@ use bzip2::read::BzDecoder;
 use chrono::Utc;
 use clap::{Parser, ValueHint};
 use console::Style;
-use humansize::{format_size, DECIMAL};
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressFinish, ProgressStyle};
 use lzma::LzmaReader;
 use memmap2::{Mmap, MmapMut};
@@ -94,7 +93,7 @@ impl Cmd {
                     .new_partition_info
                     .as_ref()
                     .and_then(|info| info.size)
-                    .map(|size| format_size(size, DECIMAL));
+                    .map(|size| indicatif::HumanBytes(size).to_string());
                 let size = size.as_deref().unwrap_or("???");
 
                 let bold_green = Style::new().bold().green();
