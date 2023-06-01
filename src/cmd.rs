@@ -140,7 +140,6 @@ impl Cmd {
                         let partition = unsafe { (*partition_file.get()).as_mut_ptr() };
                         self.run_op(op, payload, partition, partition_len, block_size)
                             .expect("error running operation");
-                        progress_bar.inc(1);
 
                         // If this is the last operation of the partition,
                         // verify the output.
@@ -155,6 +154,8 @@ impl Cmd {
                                     .expect("output verification failed");
                             }
                         }
+
+                        progress_bar.inc(1);
                     });
                 }
             }
