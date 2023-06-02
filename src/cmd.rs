@@ -70,7 +70,7 @@ pub struct Cmd {
     #[clap(long, value_delimiter = ',', value_name = "PARTITIONS")]
     partitions: Vec<String>,
 
-    /// Skip input file verification (dangerous!)
+    /// Skip file verification (dangerous!)
     #[clap(long)]
     no_verify: bool,
 }
