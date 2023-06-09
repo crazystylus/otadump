@@ -360,11 +360,12 @@ message DeltaArchiveManifest {
   // Metadata related to all dynamic partitions.
   optional DynamicPartitionMetadata dynamic_partition_metadata = 15;
   // If the payload only updates a subset of partitions on the device.
-  optional bool partial_update = 16;
+  // optional bool partial_update = 16;
   // Information on compressed APEX to figure out how much space is required for
   // their decompression
-  repeated ApexInfo apex_info = 17;
+  // repeated ApexInfo apex_info = 17;
   // Security patch level of the device, usually in the format of
   // yyyy-mm-dd
-  optional string security_patch_level = 18;
+  // optional string security_patch_level = 18;
+  reserved 16 to 18;
 }
