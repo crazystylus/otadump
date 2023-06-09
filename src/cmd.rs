@@ -116,7 +116,7 @@ impl Cmd {
         let partition_dir = partition_dir.as_ref();
 
         let threadpool = self.get_threadpool()?;
-        threadpool.scope(|scope| -> Result<()> {
+        threadpool.scope_fifo(|scope| -> Result<()> {
             let multiprogress = {
                 // Setting a fixed update frequence reduces flickering.
                 let draw_target = ProgressDrawTarget::stderr_with_hz(2);
@@ -136,7 +136,7 @@ impl Cmd {
                     let partition_file = Arc::clone(&partition_file);
                     let remaining_ops = Arc::clone(&remaining_ops);
 
-                    scope.spawn(move |_| {
+                    scope.spawn_fifo(move |_| {
                         let partition = unsafe { (*partition_file.get()).as_mut_ptr() };
                         self.run_op(op, payload, partition, partition_len, block_size)
                             .expect("error running operation");

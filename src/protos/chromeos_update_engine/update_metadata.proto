@@ -367,4 +367,5 @@ message DeltaArchiveManifest {
   // Security patch level of the device, usually in the format of
   // yyyy-mm-dd
   // optional string security_patch_level = 18;
+  reserved 16 to 18;
 }
