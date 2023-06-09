@@ -77,9 +77,16 @@ Run the following command in your terminal:
 otadump payload.bin
 ```
 
+## Contributors
+
+- [Kartik Sharma][crazystylus]
+- [Ajeet D'Souza][ajeetdsouza]
+
+[ajeetdsouza]: https://github.com/ajeetdsouza
 [benchmarks]: contrib/benchmarks.svg
 [crates.io-badge]: https://img.shields.io/crates/v/otadump?logo=rust&logoColor=white&style=flat-square
 [crates.io]: https://crates.io/crates/otadump
+[crazystylus]: https://github.com/crazystylus
 [crazystylus/otadump]: https://github.com/crazystylus/otadump
 [demo]: contrib/demo.gif
 [payload_dumper-incremental-ota]: https://github.com/vm03/payload_dumper/issues/53

@@ -21,6 +21,7 @@ anyhow = "1.0.69"
 bzip2 = { version = "0.4.4", features = ["static"] }
 chrono = "0.4.24"
 clap = { version = "4.2.1", features = ["derive"] }
+color-print = "0.3.4"
 comfy-table = "6.1.4"
 console = { version = "0.15.5", features = ["windows-console-colors"] }
 hex = "0.4.3"

@@ -25,13 +25,19 @@ use crate::chromeos_update_engine::install_operation::Type;
 use crate::chromeos_update_engine::{DeltaArchiveManifest, InstallOperation, PartitionUpdate};
 use crate::payload::Payload;
 
-const HELP_TEMPLATE: &str = "\
-{before-help}{name} {version}
-{author-with-newline}{about-with-newline}
-{usage-heading} {usage}
+const HELP_TEMPLATE: &str = color_print::cstr!(
+    "\
+{before-help}<bold><underline>{name} {version}</underline></bold>
+{author}
+https://github.com/crazystylus/otadump
 
-{all-args}{after-help}
-";
+{about}
+
+{usage-heading}
+{tab}{usage}
+
+{all-args}{after-help}"
+);
 
 #[derive(Debug, Parser)]
 #[clap(
