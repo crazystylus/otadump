@@ -17,22 +17,35 @@ jobs:
       fail-fast: false
       matrix:
         include:
+
+          # GNU Targets
           - os: ubuntu-latest
-            target:
-              x86_64-unknown-linux-gnu
-              # - os: ubuntu-latest
-              #   target: arm-unknown-linux-gnueabihf
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-latest
+            target: arm-unknown-linux-gnueabihf
           - os: ubuntu-latest
             target: armv7-unknown-linux-gnueabihf
           - os: ubuntu-latest
             target: aarch64-unknown-linux-gnu
 
+          # MUSL Targets
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+          - os: ubuntu-latest
+            target: arm-unknown-linux-musleabihf
+          - os: ubuntu-latest
+            target: armv7-unknown-linux-musleabihf
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-musl
+          
+          # Darwin targets
           - os: macos-11
             target:
               x86_64-apple-darwin
               # - os: macos-11
               #   target: aarch64-apple-darwin
 
+          # Windows targets
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             triplet: x64-windows-static-md
