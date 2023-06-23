@@ -20,6 +20,8 @@ use prost::Message;
 use rayon::{ThreadPool, ThreadPoolBuilder};
 use sha2::{Digest, Sha256};
 use sync_unsafe_cell::SyncUnsafeCell;
+use zip::result::ZipError;
+use zip::ZipArchive;
 
 use crate::chromeos_update_engine::install_operation::Type;
 use crate::chromeos_update_engine::{DeltaArchiveManifest, InstallOperation, PartitionUpdate};
@@ -49,7 +51,7 @@ https://github.com/crazystylus/otadump
     version = env!("CARGO_PKG_VERSION"),
 )]
 pub struct Cmd {
-    /// Payload file
+    /// OTA file, either a .zip file or a payload.bin.
     #[clap(value_hint = ValueHint::FilePath, value_name = "PATH")]
     payload: PathBuf,
 
@@ -246,7 +248,25 @@ impl Cmd {
         let path = &self.payload;
         let file = File::open(path)
             .with_context(|| format!("unable to open file for reading: {path:?}"))?;
-        unsafe { Mmap::map(&file) }.with_context(|| format!("failed to mmap file: {path:?}"))
+
+        // Assume the file is a zip archive. If it's not, we get an
+        // InvalidArchive error, and we can treat it as a payload.bin file.
+        match ZipArchive::new(&file) {
+            Ok(mut archive) => {
+                let mut zipfile = archive
+                    .by_name("payload.bin")
+                    .context("could not find payload.bin file in archive")?;
+
+                let mut file = tempfile::tempfile().context("failed to create temporary file")?;
+                let _ = file.set_len(zipfile.size());
+                io::copy(&mut zipfile, &mut file).context("failed to write to temporary file")?;
+
+                unsafe { Mmap::map(&file) }.context("failed to mmap temporary file")
+            }
+            Err(ZipError::InvalidArchive(_)) => unsafe { Mmap::map(&file) }
+                .with_context(|| format!("failed to mmap file: {path:?}")),
+            Err(e) => Err(e).context("failed to open zip archive"),
+        }
     }
 
     fn open_partition_file(

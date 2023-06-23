@@ -27,6 +27,7 @@ verification - no fear of a bad OTA file bricking your device.
 | Output file verification     | ✔                     |                          |                                           |
 | Extract selective partitions | ✔                     | ✔                        | ✔                                         |
 | Parallelized extraction      | ✔                     | ✔                        |                                           |
+| Runs directly on .zip files  | ✔                     | ✔                        |                                           |
 | Incremental OTA support      |                       |                          | [Partial][payload_dumper-incremental-ota] |
 
 ## Benchmarks
@@ -92,4 +93,4 @@ otadump payload.bin
 [payload_dumper-incremental-ota]: https://github.com/vm03/payload_dumper/issues/53
 [releases]: https://github.com/crazystylus/otadump/releases
 [ssut/payload-dumper-go]: https://github.com/ssut/payload-dumper-go
-[vm03/payload_dumper]: https://github.com/crazystylus/otadump
+[vm03/payload_dumper]: https://github.com/vm03/payload_dumper

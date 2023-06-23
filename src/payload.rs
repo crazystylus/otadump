@@ -1,4 +1,4 @@
-use anyhow::{anyhow, ensure, Result};
+use anyhow::{anyhow, Result};
 use nom_derive::{NomBE, Parse};
 
 /// Update file format: contains all the operations needed to update a system to
@@ -7,7 +7,7 @@ use nom_derive::{NomBE, Parse};
 #[derive(Debug, NomBE)]
 pub struct Payload<'a> {
     /// Should be "CrAU".
-    #[nom(Take = "4")]
+    #[nom(Tag = r#"b"CrAU""#)]
     pub magic_bytes: &'a [u8],
 
     /// Payload major version.
@@ -38,13 +38,10 @@ pub struct Payload<'a> {
 
 impl<'a> Payload<'a> {
     pub fn parse(bytes: &'a [u8]) -> Result<Self> {
+        // TODO: this outputs the entire bytes of the file in the event of a
+        // parser error. Use nom's VerboseError here.
         let (_, payload): (_, Payload) = Parse::parse(bytes)
             .map_err(|e| anyhow!(e.to_string()).context("failed to parse payload"))?;
-        ensure!(
-            payload.magic_bytes == b"CrAU",
-            "invalid magic bytes: {}",
-            hex::encode(payload.magic_bytes)
-        );
         Ok(payload)
     }
 }
