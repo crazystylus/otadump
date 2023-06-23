@@ -149,6 +149,8 @@ impl Cmd {
                         self.run_op(op, payload, partition, partition_len, block_size)
                             .expect("error running operation");
 
+                        // TODO: this can be quite slow, add progress indicator
+                        // for verifying output file.
                         // If this is the last operation of the partition,
                         // verify the output.
                         if !self.no_verify && remaining_ops.fetch_sub(1, Ordering::AcqRel) == 1 {
@@ -253,6 +255,8 @@ impl Cmd {
         // InvalidArchive error, and we can treat it as a payload.bin file.
         match ZipArchive::new(&file) {
             Ok(mut archive) => {
+                // TODO: add progress indicator while zip file is being
+                // extracted.
                 let mut zipfile = archive
                     .by_name("payload.bin")
                     .context("could not find payload.bin file in archive")?;
