@@ -75,6 +75,10 @@ Download the pre-built binary from the [Releases] page. Extract it and run the
 Run the following command in your terminal:
 
 ```sh
+# Run directly on .zip file.
+otadump ota.zip
+
+# Run on payload.bin file.
 otadump payload.bin
 ```
 
