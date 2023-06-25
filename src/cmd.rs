@@ -176,7 +176,7 @@ impl Cmd {
     fn create_progress_bar(&self, update: &PartitionUpdate) -> Result<ProgressBar> {
         let finish = ProgressFinish::AndLeave;
         let style = ProgressStyle::with_template(
-            "{prefix:>16!.green.bold} [{wide_bar:.white.dim}] {percent:>3.white}%",
+            "{prefix:>20!.green.bold} [{wide_bar:.white.dim}] {percent:>3.white}%",
         )
         .context("unable to build progress bar template")?
         .progress_chars("=> ");
