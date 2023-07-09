@@ -20,6 +20,7 @@ use prost::Message;
 use rayon::{ThreadPool, ThreadPoolBuilder};
 use sha2::{Digest, Sha256};
 use sync_unsafe_cell::SyncUnsafeCell;
+use term_grid::{Alignment, Cell, Direction, Filling, Grid};
 use zip::result::ZipError;
 use zip::ZipArchive;
 
@@ -93,6 +94,13 @@ impl Cmd {
         let block_size = manifest.block_size.context("block_size not defined")? as usize;
 
         if self.list {
+            let term = console::Term::stdout();
+            let (_, term_width) = term.size();
+            let mut partition_grid = Grid::new(term_grid::GridOptions {
+                direction: Direction::LeftToRight,
+                filling: Filling::Spaces(1),
+            });
+
             manifest
                 .partitions
                 .sort_unstable_by(|p1, p2| p1.partition_name.cmp(&p2.partition_name));
@@ -105,8 +113,25 @@ impl Cmd {
                 let size = size.as_deref().unwrap_or("???");
 
                 let bold_green = Style::new().bold().green();
-                println!("{} ({size})", bold_green.apply_to(&partition.partition_name));
+                let partition_cell_content =
+                    format!("{} ({size})", bold_green.apply_to(&partition.partition_name));
+
+                // NOTE: term_grid measures incorrect width when ansi characters are present
+                let partition_cell_width = console::measure_text_width(&partition_cell_content);
+                let partition_cell = Cell {
+                    contents: partition_cell_content,
+                    width: partition_cell_width,
+                    alignment: Alignment::Right,
+                };
+                partition_grid.add(partition_cell);
             }
+
+            println!(
+                "{}",
+                partition_grid
+                    .fit_into_width(term_width.into())
+                    .unwrap_or(partition_grid.fit_into_columns(1))
+            );
             return Ok(());
         }
 

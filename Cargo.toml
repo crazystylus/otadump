@@ -34,6 +34,7 @@ rust-lzma = { version = "0.6.0", features = ["static"] }
 sha2 = "0.10.6"
 sync-unsafe-cell = "0.1.0"
 tempfile = "3.6.0"
+term_grid = "0.2.0"
 zip = { version = "0.6.6", features = [
     "deflate",
     "bzip2",
