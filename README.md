@@ -59,9 +59,9 @@ curl -sS https://raw.githubusercontent.com/crazystylus/otadump/mainline/install.
 Otherwise, using Cargo:
 
 ```sh
-# Needs LZMA and Protobuf libraries installed.
-# - On macOS: brew install protobuf xz
-# - On Debian / Ubuntu: apt install liblzma-dev protobuf-compiler
+# Needs LZMA, Protobuf and pkg-config libraries installed.
+# - On macOS: brew install protobuf xz pkg-config
+# - On Debian / Ubuntu: apt install liblzma-dev protobuf-compiler pkg-config
 cargo install --locked otadump
 ```
 
