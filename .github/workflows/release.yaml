@@ -52,7 +52,7 @@ jobs:
         id: get_version
         uses: SebRollen/toml-action@2bd04b06a3ebc3e6a3eb6060de115710cad16cd6 # v1.0.2
         with:
-          file: Cargo.toml
+          file: src-tauri/Cargo.toml
           field: package.version
 
       - name: Install Rust
