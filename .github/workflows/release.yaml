@@ -17,30 +17,23 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # MUSL Targets
+          # Linux
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
-          - os: ubuntu-latest
-            target: arm-unknown-linux-musleabihf
-          - os: ubuntu-latest
-            target: armv7-unknown-linux-musleabihf
-          - os: ubuntu-latest
-            target: aarch64-unknown-linux-musl
 
-          # Darwin targets
+          # Darwin
+          # - os: macos-latest
+          #   target: x86_64-apple-darwin
           - os: macos-11
-            target:
-              x86_64-apple-darwin
-              # - os: macos-11
-              #   target: aarch64-apple-darwin
+            target: aarch64-apple-darwin
 
-          # Windows targets
+          # Windows
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             triplet: x64-windows-static-md
-          - os: windows-latest
-            target: aarch64-pc-windows-msvc
-            triplet: arm64-windows-static-md
+          # - os: windows-latest
+          #   target: aarch64-pc-windows-msvc
+          #   triplet: arm64-windows-static-md
 
     steps:
       - name: Checkout repository
@@ -73,6 +66,12 @@ jobs:
         with:
           bun-version: 1.0.11
 
+      - name: Install Linux dependencies
+        if: runner.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.0-dev libappindicator3-dev librsvg2-dev patchelf
+
       - name: Install build deps for macos
         if: runner.os == 'macOS'
         run: brew install xz protobuf
@@ -99,16 +98,20 @@ jobs:
         run: |
           ${{ env.RUNVCPKG_VCPKG_ROOT }}/vcpkg.exe install liblzma --triplet ${{ matrix.triplet }}
 
-      - name: Setup Cross
-        uses: actions-rs/cargo@844f36862e911db73fe0815f00a4a2602c279505 # v1.0.3
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          command: version
-          use-cross: ${{ runner.os == 'Linux' }}
+          tagName: v__VERSION__ # the action automatically replaces __VERSION__ with the app version
+          releaseName: v__VERSION__
+          releaseDraft: true
+          prerelease: false
+          args: --target ${{ matrix.target }}
 
       - name: Build binary
         run: |
           bun install --exact --frozen-lockfile
-          bun run tauri build --runner=${{ runner.os == 'Linux' && 'cross' || 'cargo' }} --target=${{ matrix.target }}
+          bun run tauri build --ci --runner=${{ runner.os == 'Linux' && 'cross' || 'cargo' }} --target=${{ matrix.target }}
 
       - name: Package for (*nix)
         if: runner.os != 'Windows'
