@@ -159,8 +159,7 @@ impl ExtractOptions {
                 .with_context(|| format!("Could not create output directory: {output_dir:?}"))?;
 
             for update in &manifest.partitions {
-                let (partition_file, partition_path) =
-                    Self::open_partition_file(update, output_dir)?;
+                let partition_file = Self::open_partition_file(update, output_dir)?;
                 let partition_len = partition_file.len();
                 let partition_file = Arc::new(SyncUnsafeCell::new(partition_file));
 
@@ -186,24 +185,26 @@ impl ExtractOptions {
                         // If this is the last operation of the partition, verify the output.
                         let partition_ops_completed =
                             partition_ops_completed.fetch_add(1, Ordering::AcqRel) + 1;
-                        if partition_ops_completed == partition_ops {
-                            update
-                                .new_partition_info
-                                .as_ref()
-                                .and_then(|info| info.hash.as_ref())
-                                .inspect(|hash| {
-                                    let partition = unsafe { (*partition_file.get()).as_ref() };
-                                    if let Err(e) = Self::verify_sha256_and_report(
-                                        partition,
-                                        hash,
-                                        Arc::clone(&tracker),
-                                    )
-                                    .context("Output verification failed")
-                                    {
-                                        tracker.report_error(e.into());
-                                    }
-                                });
+                        if partition_ops_completed != partition_ops {
+                            return;
                         }
+
+                        update
+                            .new_partition_info
+                            .as_ref()
+                            .and_then(|info| info.hash.as_ref())
+                            .inspect(|hash| {
+                                let partition = unsafe { (*partition_file.get()).as_ref() };
+                                let result = Self::verify_sha256_and_report(
+                                    partition,
+                                    hash,
+                                    Arc::clone(&tracker),
+                                )
+                                .context("Output verification failed");
+                                if let Err(e) = result {
+                                    tracker.report_error(e.into());
+                                }
+                            });
                     });
                 }
             }
@@ -347,7 +348,7 @@ impl ExtractOptions {
     fn open_partition_file(
         update: &PartitionUpdate,
         partition_dir: impl AsRef<Path>,
-    ) -> Result<(MmapMut, PathBuf)> {
+    ) -> Result<MmapMut> {
         let partition_len = update
             .new_partition_info
             .as_ref()
@@ -367,7 +368,7 @@ impl ExtractOptions {
 
         let file = unsafe { MmapMut::map_mut(&file) }
             .with_context(|| format!("Failed to mmap file: {path:?}"))?;
-        Ok((file, path))
+        Ok(file)
     }
 
     fn verify_sha256(data: &[u8], exp_hash: &[u8]) -> Result<()> {

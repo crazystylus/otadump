@@ -1,23 +1,25 @@
 use std::error::Error;
+use std::path::PathBuf;
 
 use indicatif::{ProgressBar, ProgressStyle};
 
 use crate::core::ExtractOptions;
 
 pub fn extract(options: ExtractOptions) {
-    let reporter = Box::new(Reporter::new());
+    let reporter = Box::new(Reporter::new(&options.output_dir));
     options.extract(reporter);
 }
 
 #[derive(Debug)]
 struct Reporter {
+    output_dir: PathBuf,
     progress_bar: ProgressBar,
 }
 
 impl Reporter {
-    const PROGRESS_TICKS: usize = 10000;
+    const PROGRESS_TICKS: usize = 10_000;
 
-    fn new() -> Self {
+    fn new(output_dir: impl Into<PathBuf>) -> Self {
         let style = ProgressStyle::with_template(
             "{prefix:>16!.cyan.bold} [{wide_bar:.white.dim}] {percent:>3.white}%",
         )
@@ -27,7 +29,7 @@ impl Reporter {
             .with_prefix("Extracting")
             .with_style(style);
         progress_bar.println("Extracting files...");
-        Self { progress_bar }
+        Self { output_dir: output_dir.into(), progress_bar }
     }
 }
 
@@ -39,7 +41,8 @@ impl crate::core::Reporter for Reporter {
 
     fn report_complete(&self) {
         self.progress_bar.finish_and_clear();
-        self.progress_bar.println("Extraction complete.");
+        let message = format!("Extraction complete: {}", self.output_dir.display());
+        self.progress_bar.println(message);
     }
 
     fn report_error(&self, error: Box<dyn Error>) {
