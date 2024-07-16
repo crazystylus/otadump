@@ -107,6 +107,7 @@ jobs:
 
       - name: Build binary
         run: |
+          bun install --exact --frozen-lockfile
           bun run tauri build --runner=${{ runner.os == 'Linux' && 'cross' || 'cargo' }} --target=${{ matrix.target }}
 
       - name: Package for (*nix)
