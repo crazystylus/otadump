@@ -98,7 +98,12 @@ jobs:
         run: |
           ${{ env.RUNVCPKG_VCPKG_ROOT }}/vcpkg.exe install liblzma --triplet ${{ matrix.triplet }}
 
-      - uses: tauri-apps/tauri-action@v0
+      - name: Install frontend dependencies
+        run: |
+          bun install --exact --frozen-lockfile
+
+      - name: Tauri release
+        uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
