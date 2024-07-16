@@ -17,7 +17,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-
           # MUSL Targets
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
@@ -27,7 +26,7 @@ jobs:
             target: armv7-unknown-linux-musleabihf
           - os: ubuntu-latest
             target: aarch64-unknown-linux-musl
-          
+
           # Darwin targets
           - os: macos-11
             target:
@@ -69,6 +68,11 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.0.11
+
       - name: Install build deps for macos
         if: runner.os == 'macOS'
         run: brew install xz protobuf
@@ -95,12 +99,15 @@ jobs:
         run: |
           ${{ env.RUNVCPKG_VCPKG_ROOT }}/vcpkg.exe install liblzma --triplet ${{ matrix.triplet }}
 
-      - name: Build binary
+      - name: Setup Cross
         uses: actions-rs/cargo@844f36862e911db73fe0815f00a4a2602c279505 # v1.0.3
         with:
-          command: build
-          args: --release --locked --target=${{ matrix.target }} --color=always --verbose
+          command: version
           use-cross: ${{ runner.os == 'Linux' }}
+
+      - name: Build binary
+        run: |
+          bun run tauri build --runner=${{ runner.os == 'Linux' && 'cross' || 'cargo' }} --target=${{ matrix.target }}
 
       - name: Package for (*nix)
         if: runner.os != 'Windows'
