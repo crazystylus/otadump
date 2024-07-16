@@ -62,7 +62,7 @@ jobs:
           key: ${{ matrix.target }}
 
       - name: Install Bun
-        uses: oven-sh/setup-bun@4bc047ad259df6fc24a6c9b0f9a0cb08cf17fbe5
+        uses: oven-sh/setup-bun@4bc047ad259df6fc24a6c9b0f9a0cb08cf17fbe5 # v2.0.1
         with:
           bun-version: 1.1.20
 
@@ -88,9 +88,10 @@ jobs:
 
       - name: Install vcpkg on windows
         if: runner.os == 'Windows'
-        uses: lukka/run-vcpkg@v11
+        uses: lukka/run-vcpkg@5e0cab206a5ea620130caf672fce3e4a6b5666a1 # v11.5
         with:
           vcpkgDirectory: C:/vcpkg
+          vcpkgGitCommitId: 1de2026f28ead93ff1773e6e680387643e914ea1
           doNotUpdateVcpkg: true
 
       - name: Install liblzma on windows
