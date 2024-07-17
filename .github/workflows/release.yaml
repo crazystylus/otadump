@@ -82,7 +82,7 @@ jobs:
 
       - name: Install protoc on Windows
         if: runner.os == 'Windows'
-        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        uses: arduino/setup-protoc@v3.0.0
         with:
           version: "3.x"
 
