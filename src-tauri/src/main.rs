@@ -18,25 +18,19 @@ fn extract(app: AppHandle, payload_file: PathBuf, output_dir: PathBuf) {
     });
 }
 
-const HELP_TEMPLATE: &str = color_print::cstr!("\
+const HELP_TEMPLATE: &str = color_print::cstr!(
+    "\
 {before-help}<bold><underline>{name} {version}</underline></bold>
 {author}
-https://github.com/ajeetdsouza/zoxide
+https://github.com/crazystylus/otadump
 
 {about}
 
 {usage-heading}
 {tab}{usage}
 
-{all-args}{after-help}
-
-<bold><underline>Environment variables:</underline></bold>
-{tab}<bold>_ZO_DATA_DIR</bold>        {tab}Path for zoxide data files
-{tab}<bold>_ZO_ECHO</bold>            {tab}Print the matched directory before navigating to it when set to 1
-{tab}<bold>_ZO_EXCLUDE_DIRS</bold>    {tab}List of directory globs to be excluded
-{tab}<bold>_ZO_FZF_OPTS</bold>        {tab}Custom flags to pass to fzf
-{tab}<bold>_ZO_MAXAGE</bold>          {tab}Maximum total age after which entries start getting deleted
-{tab}<bold>_ZO_RESOLVE_SYMLINKS</bold>{tab}Resolve symlinks when storing paths");
+{all-args}{after-help}"
+);
 
 #[derive(Debug, Parser)]
 #[clap(

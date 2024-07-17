@@ -18,8 +18,8 @@ jobs:
       matrix:
         include:
           # Linux
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-musl
+          - os: ubuntu-20.04
+            target: x86_64-unknown-linux-gnu
 
           # Darwin
           # - os: macos-latest
@@ -31,22 +31,15 @@ jobs:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             triplet: x64-windows-static-md
-          # - os: windows-latest
-          #   target: aarch64-pc-windows-msvc
-          #   triplet: arm64-windows-static-md
+          - os: windows-latest
+            target: aarch64-pc-windows-msvc
+            triplet: arm64-windows-static-md
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@dc323e67f16fb5f7663d20ff7941f27f5809e9b6 # v2.6.0
         with:
           fetch-depth: 0
-
-      - name: Get version
-        id: get_version
-        uses: SebRollen/toml-action@2bd04b06a3ebc3e6a3eb6060de115710cad16cd6 # v1.0.2
-        with:
-          file: src-tauri/Cargo.toml
-          field: package.version
 
       - name: Install Rust
         uses: actions-rs/toolchain@16499b5e05bf2e26879000db0c1d13f7e13fa3af # v1.0.7
@@ -57,17 +50,12 @@ jobs:
           target: ${{ matrix.target }}
 
       - name: Setup cache
-        uses: Swatinem/rust-cache@81d053bdb0871dcd3f10763c8cc60d0adc41762b # v1
+        uses: Swatinem/rust-cache@23bce251a8cd2ffc3c1075eaa2367cf899916d84 # v2.7.3
         with:
           key: ${{ matrix.target }}
 
-      - name: Install Bun
-        uses: oven-sh/setup-bun@4bc047ad259df6fc24a6c9b0f9a0cb08cf17fbe5 # v2.0.1
-        with:
-          bun-version: 1.1.20
-
       - name: Install Linux dependencies
-        if: ${{ matrix.os == 'ubuntu-latest' }}
+        if: ${{ runner.os == 'Linux' }}
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -84,21 +72,21 @@ jobs:
             protobuf-compiler \
             wget
 
-      - name: Install build deps for macos
+      - name: Install macOS dependencies
         if: runner.os == 'macOS'
         run: brew install xz protobuf
 
-      - name: Install cmake on windows
+      - name: Install cmake on Windows
         if: runner.os == 'Windows'
-        uses: lukka/get-cmake@latest
+        uses: lukka/get-cmake@983956e4a5edce90f0dfcc38c1543077e668402b # v3.30.0
 
-      - name: Install protoc on windows
+      - name: Install protoc on Windows
         if: runner.os == 'Windows'
-        uses: arduino/setup-protoc@v1
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
         with:
           version: "3.x"
 
-      - name: Install vcpkg on windows
+      - name: Install vcpkg on Windows
         if: runner.os == 'Windows'
         uses: lukka/run-vcpkg@5e0cab206a5ea620130caf672fce3e4a6b5666a1 # v11.5
         with:
@@ -106,61 +94,26 @@ jobs:
           vcpkgGitCommitId: 1de2026f28ead93ff1773e6e680387643e914ea1
           doNotUpdateVcpkg: true
 
-      - name: Install liblzma on windows
+      - name: Install liblzma on Windows
         if: runner.os == 'Windows'
         run: |
           ${{ env.RUNVCPKG_VCPKG_ROOT }}/vcpkg.exe install liblzma --triplet ${{ matrix.triplet }}
 
-      - name: Install frontend dependencies
+      - name: Install Bun
+        uses: oven-sh/setup-bun@4bc047ad259df6fc24a6c9b0f9a0cb08cf17fbe5 # v2.0.1
+        with:
+          bun-version: 1.1.20
+
+      - name: Install Bun dependencies
         run: |
           bun install --exact --frozen-lockfile
 
       - name: Tauri release
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@41242bd545b6d1310ffc1685fb8bb87e97f0b748 # v0.5.9
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: v__VERSION__ # the action automatically replaces __VERSION__ with the app version
+          tagName: v__VERSION__
           releaseName: v__VERSION__
           releaseDraft: true
-          prerelease: false
           args: --target ${{ matrix.target }}
-
-      - name: Build binary
-        run: |
-          bun install --exact --frozen-lockfile
-          bunx tauri build --ci --runner=${{ runner.os == 'Linux' && 'cross' || 'cargo' }} --target=${{ matrix.target }}
-
-      - name: Package for (*nix)
-        if: runner.os != 'Windows'
-        run: >
-          tar -cv
-          LICENSE README.md
-          -C target/${{ matrix.target }}/release/ otadump
-          | gzip --best
-          > 'otadump-${{ steps.get_version.outputs.value }}-${{ matrix.target }}.tar.gz'
-      - name: Package (Windows)
-        if: runner.os == 'Windows'
-        run: >
-          7z a 'otadump-${{ steps.get_version.outputs.value }}-${{ matrix.target }}.zip'
-          LICENSE README.md
-          ./target/${{ matrix.target }}/release/otadump.exe
-      - name: Upload artifact
-        uses: actions/upload-artifact@82c141cc518b40d92cc801eee768e7aafc9c2fa2 # v2.3.1
-        with:
-          name: ${{ matrix.target }}
-          path: |
-            *.deb
-            *.tar.gz
-            *.zip
-      - name: Create release
-        if: ${{ github.ref == 'refs/heads/mainline' && startsWith(github.event.head_commit.message, 'chore(release)') }}
-        uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
-        with:
-          draft: true
-          files: |
-            *.deb
-            *.tar.gz
-            *.zip
-          name: ${{ steps.get_version.outputs.value }}
-          tag_name: ""
