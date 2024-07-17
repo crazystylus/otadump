@@ -19,7 +19,7 @@ jobs:
         include:
           # Linux
           - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
+            target: x86_64-unknown-linux-musl
 
           # Darwin
           # - os: macos-latest
@@ -129,7 +129,7 @@ jobs:
       - name: Build binary
         run: |
           bun install --exact --frozen-lockfile
-          bun run tauri build --ci --runner=${{ runner.os == 'Linux' && 'cross' || 'cargo' }} --target=${{ matrix.target }}
+          bunx tauri build --ci --runner=${{ runner.os == 'Linux' && 'cross' || 'cargo' }} --target=${{ matrix.target }}
 
       - name: Package for (*nix)
         if: runner.os != 'Windows'
