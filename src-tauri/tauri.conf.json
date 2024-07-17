@@ -45,6 +45,7 @@
       "targets": "all",
       "icon": [
         "icons/otadump.ico",
+        "icons/otadump.png",
         "icons/otadump.svg"
       ]
     }
