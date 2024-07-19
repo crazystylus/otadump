@@ -44,6 +44,7 @@
       "shortDescription": "Extract partitions from Android OTA files.",
       "targets": "all",
       "icon": [
+        "icons/otadump.icns",
         "icons/otadump.ico",
         "icons/otadump.png",
         "icons/otadump.svg"
