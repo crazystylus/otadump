@@ -18,19 +18,19 @@ jobs:
       matrix:
         include:
           # Linux
-          - os: ubuntu-20.04
-            target: x86_64-unknown-linux-gnu
+          # - os: ubuntu-20.04
+          #   target: x86_64-unknown-linux-gnu
 
           # Darwin
           - os: macos-latest
             target: x86_64-apple-darwin
-          - os: macos-11
-            target: aarch64-apple-darwin
+          # - os: macos-11
+          #   target: aarch64-apple-darwin
 
           # Windows
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            triplet: x64-windows-static-md
+          # - os: windows-latest
+          #   target: x86_64-pc-windows-msvc
+          #   triplet: x64-windows-static-md
 
     steps:
       - name: Checkout repository
@@ -71,7 +71,7 @@ jobs:
 
       - name: Install macOS dependencies
         if: runner.os == 'macOS'
-        run: brew install xz protobuf
+        run: brew install pkg-config protobuf xz
 
       - name: Install cmake on Windows
         if: runner.os == 'Windows'
