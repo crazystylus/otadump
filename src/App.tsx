@@ -64,6 +64,8 @@ const App = () => {
   return (
     <FluentProvider
       css={{
+        boxSizing: 'border-box',
+        height: '100vh',
         ...shorthands.padding(
           tokens.spacingVerticalXXXL,
           tokens.spacingHorizontalXXXL
@@ -143,12 +145,14 @@ const App = () => {
           display: flex;
           flex-direction: column;
           gap: 24px;
-          min-height: 100vh;
-          /* mobile viewport bug fix */
-          min-height: -webkit-fill-available;
+          height: 100%;
+          // box-sizing: border-box;
+          // min-height: 100vh;
+          // /* mobile viewport bug fix */
+          // min-height: -webkit-fill-available;
         `}
       >
-        <div css={{ maxHeight: "100%", overflow: "scroll" }}>
+        <div css={{ height: 'fit-content', overflow: "auto", flexShrink:0 }}>
           <Col
             css_={{
               alignItems: "flex-start",
