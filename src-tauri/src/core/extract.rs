@@ -173,22 +173,33 @@ impl ExtractOptions {
 
                     scope.spawn_fifo(move |_| {
                         let partition = unsafe { (*partition_file.get()).as_mut_ptr() };
-                        if let Err(e) =
+
+                        // Run a single operation.
+                        let result =
                             Self::run_op(op, payload, partition, partition_len, block_size)
-                                .context("Error running operation")
-                        {
+                                .context("Error running operation");
+                        if let Err(e) = result {
                             tracker.report_error(e.into());
                             return;
                         }
                         tracker.report_progress(1);
 
-                        // If this is the last operation of the partition, verify the output.
+                        // Return early if this is not the last operation of the partition.
                         let partition_ops_completed =
                             partition_ops_completed.fetch_add(1, Ordering::AcqRel) + 1;
                         if partition_ops_completed != partition_ops {
                             return;
                         }
 
+                        // Flush file to disk.
+                        let result = unsafe { (*partition_file.get()).flush() }
+                            .context("Error while flushing file to disk");
+                        if let Err(e) = result {
+                            tracker.report_error(e.into());
+                            return;
+                        }
+
+                        // Verify output hash (if available).
                         update
                             .new_partition_info
                             .as_ref()
