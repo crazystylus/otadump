@@ -46,7 +46,7 @@ impl ExtractOptions2 {
         Self {
             num_threads: None,
             overwrite: false,
-            partitions: Some(HashSet::new()),
+            partitions: None,
             progress_reporter: Box::new(NoOpProgressReporter),
         }
     }
@@ -97,7 +97,7 @@ impl ExtractOptions2 {
         let num_threads = self
             .num_threads
             .unwrap_or_else(|| std::thread::available_parallelism().map(NonZero::get).unwrap_or(1))
-            .min(1);
+            .max(1);
         let threadpool = ThreadPoolBuilder::new()
             .num_threads(num_threads)
             .build()
@@ -190,6 +190,7 @@ impl ExtractOptions2 {
         let path = partition_dir.as_ref().join(filename);
 
         let file = OpenOptions::new()
+            .create(true)
             .create_new(!self.overwrite)
             .read(true)
             .write(true)
@@ -302,7 +303,7 @@ impl Task<'_> {
     }
 
     fn extract_dst_extents(&self, op: &InstallOperation) -> Result<Vec<&'static mut [u8]>> {
-        let partition_file = unsafe { self.partition_file.get() };
+        let partition_file = self.partition_file.get();
         let partition = unsafe { (*partition_file).as_mut_ptr() };
         let partition_len = unsafe { (*partition_file).len() };
 

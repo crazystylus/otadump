@@ -6,7 +6,7 @@ use std::{env, thread};
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use otadump::core::ExtractOptions;
+use otadump::core::{ExtractOptions, ExtractOptions2};
 use otadump::{cli, gui};
 use tauri::AppHandle;
 
@@ -54,18 +54,37 @@ struct Args {
 fn main() -> Result<()> {
     // If there are no args, start the GUI. Else, treat it as a command-line
     // invocation.
-    if env::args_os().count() <= 1 {
-        tauri::Builder::default()
-            .invoke_handler(tauri::generate_handler![extract])
-            .run(tauri::generate_context!())
-            .context("Error running application")
-    } else {
-        let args = Args::parse();
-        let options = ExtractOptions {
-            payload_file: args.payload_file.into(),
-            output_dir: args.output_dir.into(),
-        };
-        cli::extract(options);
-        Ok(())
-    }
+    // if env::args_os().count() <= 1 {
+    //     tauri::Builder::default()
+    //         .invoke_handler(tauri::generate_handler![extract])
+    //         .run(tauri::generate_context!())
+    //         .context("Error running application")
+    // } else {
+    //     let args = Args::parse();
+    //     let options = ExtractOptions {
+    //         payload_file: args.payload_file.into(),
+    //         output_dir: args.output_dir.into(),
+    //     };
+    //     cli::extract(options);
+    //     Ok(())
+    // }
+
+    ExtractOptions2::new()
+        .overwrite(true)
+        .extract(
+            "/home/ajeet/ws/otadump-payloads/bluejay-ota-sd2a.220601.001.a1-bacd4108.zip",
+            "/tmp/asdf",
+        )
+        .unwrap();
+    Ok(())
+
+    // let args = Args::parse();
+    // let options = ExtractOptions {
+    //     payload_file:
+    // "/home/ajeet/ws/otadump-payloads/bluejay-ota-sd2a.220601.001.a1-bacd4108.
+    // zip"         .into(),
+    //     output_dir: "/tmp/asdf".into(),
+    // };
+    // cli::extract(options);
+    // Ok(())
 }
