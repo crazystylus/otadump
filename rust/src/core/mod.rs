@@ -21,6 +21,7 @@ use anyhow::{bail, ensure, Context as _, Error, Result};
 use bzip2::read::BzDecoder;
 use chromeos_update_engine::install_operation::Type;
 use chromeos_update_engine::{DeltaArchiveManifest, InstallOperation, PartitionUpdate};
+use clap::Parser;
 pub use extract::ExtractOptions;
 use lzma::LzmaReader;
 use memmap2::{Mmap, MmapMut};
@@ -33,22 +34,26 @@ use sync_unsafe_cell::SyncUnsafeCell;
 use zip::result::ZipError;
 use zip::ZipArchive;
 
-pub struct ExtractOptions2 {
+// The chunk size is the number of bytes we verify before we count one "tick" in
+// the progress tracker.
+const VERIFY_CHUNK_SIZE: usize = 2 * 1024 * 1024; // 2 MiB
+
+pub struct ExtractOptions2<'a> {
     num_threads: Option<usize>,
     overwrite: bool,
     partitions: Option<HashSet<String>>,
-    progress_reporter: Box<dyn ProgressReporter>,
+    progress_reporter: &'a dyn ProgressReporter,
     verify: bool,
 }
 
-impl ExtractOptions2 {
+impl<'a> ExtractOptions2<'a> {
     /// Creates a blank new set of options ready for configuration.
     pub fn new() -> Self {
         Self {
             num_threads: None,
             overwrite: false,
             partitions: None,
-            progress_reporter: Box::new(NoOpProgressReporter),
+            progress_reporter: &NoOpProgressReporter,
             verify: true,
         }
     }
@@ -77,12 +82,38 @@ impl ExtractOptions2 {
 
         let mut manifest =
             DeltaArchiveManifest::decode(payload.manifest).context("Unable to parse manifest")?;
+
+        // Skip partitions that are not in the list of partitions to be extracted.
+        if let Some(partitions) = &self.partitions {
+            manifest.partitions.retain(|update| partitions.contains(&update.partition_name));
+        }
+
         // Verification is slow for large partitions, and cannot be parallelized.
         // Extracting the largest partition first allows us to start verifying
         // it as early as possible.
         manifest.partitions.sort_unstable_by_key(|partition| {
             Reverse(partition.new_partition_info.as_ref().and_then(|info| info.size).unwrap_or(0))
         });
+
+        let extract_ops =
+            manifest.partitions.iter().map(|update| update.operations.len()).sum::<usize>();
+        let verify_ops = if self.verify {
+            manifest
+                .partitions
+                .iter()
+                .map(|update| {
+                    let partition_size =
+                        update.new_partition_info.as_ref().and_then(|info| info.size).unwrap_or(0)
+                            as usize;
+                    partition_size.div_ceil(VERIFY_CHUNK_SIZE)
+                })
+                .sum()
+        } else {
+            0
+        };
+        let total_ops = extract_ops + verify_ops;
+        let total_ops_completed = AtomicUsize::new(0);
+
         let block_size = manifest.block_size.context("block_size not defined")? as usize;
 
         // Ensure that all partitions to be extracted are present in the manifest.
@@ -113,13 +144,6 @@ impl ExtractOptions2 {
                     break;
                 }
 
-                // Skip partitions that are not in the list of partitions to be extracted.
-                if let Some(partitions) = &self.partitions {
-                    if !partitions.contains(&update.partition_name) {
-                        continue;
-                    }
-                }
-
                 // Create and broadcast a task to the threadpool.
                 let partition = self.open_partition_file(update, output_dir)?;
                 let task = Task {
@@ -129,6 +153,9 @@ impl ExtractOptions2 {
                     update,
                     op_idx: AtomicUsize::new(0),
                     partition: SyncUnsafeCell::new(partition),
+                    total_ops,
+                    total_ops_completed: &total_ops_completed,
+                    progress_reporter: &*self.progress_reporter,
                     error: &error,
                 };
                 scope.spawn_broadcast(move |_, ctx| {
@@ -235,7 +262,7 @@ impl ExtractOptions2 {
     }
 
     /// Set a progress reporter to report extraction progress.
-    pub fn progress_reporter(&mut self, progress_reporter: Box<dyn ProgressReporter>) -> &mut Self {
+    pub fn progress_reporter(&mut self, progress_reporter: &'a dyn ProgressReporter) -> &mut Self {
         self.progress_reporter = progress_reporter;
         self
     }
@@ -247,7 +274,7 @@ impl ExtractOptions2 {
     }
 }
 
-impl Default for ExtractOptions2 {
+impl Default for ExtractOptions2<'_> {
     fn default() -> Self {
         Self::new()
     }
@@ -262,6 +289,10 @@ struct Task<'a> {
     op_idx: AtomicUsize,
     partition: SyncUnsafeCell<MmapMut>,
 
+    total_ops: usize,
+    total_ops_completed: &'a AtomicUsize,
+    progress_reporter: &'a dyn ProgressReporter,
+
     error: &'a OnceLock<Error>,
 }
 
@@ -271,7 +302,10 @@ impl Task<'_> {
         while self.error.get().is_none() {
             let op_idx = self.op_idx.fetch_add(1, Ordering::AcqRel);
             match self.update.operations.get(op_idx) {
-                Some(op) => self.run_op(op)?,
+                Some(op) => {
+                    self.run_op(op)?;
+                    self.increment_progress();
+                }
                 None => {
                     // If this is the last thread to fetch an operation for this
                     // partition, the partition is fully extracted and can now be
@@ -279,6 +313,10 @@ impl Task<'_> {
                     if op_idx + 1 == self.update.operations.len() + ctx.num_threads() {
                         self.verify_partition()?;
                     };
+
+                    // Flush file to disk.
+                    unsafe { (*self.partition.get()).flush() }
+                        .context("Error while flushing file to disk")?;
                     break;
                 }
             }
@@ -392,9 +430,9 @@ impl Task<'_> {
     }
 
     fn verify_partition(&self) -> Result<()> {
-        // The chunk size is the number of bytes we verify before we count one "tick" in
-        // the progress tracker.
-        const VERIFY_CHUNK_SIZE: usize = 2 * 1024 * 1024; // 2 MiB
+        if !self.verify {
+            return Ok(());
+        }
 
         let Some(exp_hash) =
             self.update.new_partition_info.as_ref().and_then(|info| info.hash.as_ref())
@@ -405,7 +443,7 @@ impl Task<'_> {
         let mut digest = Sha256::new();
         for chunk in unsafe { (*self.partition.get()).chunks(VERIFY_CHUNK_SIZE) } {
             digest.update(chunk);
-            // self.progress_reporter.report_progress();
+            self.increment_progress();
         }
 
         let got_hash = digest.finalize();
@@ -415,6 +453,14 @@ impl Task<'_> {
             hex::encode(exp_hash)
         );
         Ok(())
+    }
+
+    fn increment_progress(&self) {
+        let total_ops_completed = self.total_ops_completed.fetch_add(1, Ordering::AcqRel) + 1;
+        if total_ops_completed % 16 == 0 {
+            let progress = total_ops_completed as f64 / self.total_ops as f64;
+            self.progress_reporter.report_progress(progress);
+        }
     }
 }
 
