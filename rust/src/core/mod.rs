@@ -21,9 +21,8 @@ use anyhow::{bail, ensure, Context as _, Error, Result};
 use bzip2::read::BzDecoder;
 use chromeos_update_engine::install_operation::Type;
 use chromeos_update_engine::{DeltaArchiveManifest, InstallOperation, PartitionUpdate};
-use clap::Parser;
 pub use extract::ExtractOptions;
-use lzma::LzmaReader;
+use liblzma::read::XzDecoder;
 use memmap2::{Mmap, MmapMut};
 use payload::Payload;
 use prost::Message as _;
@@ -155,7 +154,7 @@ impl<'a> ExtractOptions2<'a> {
                     partition: SyncUnsafeCell::new(partition),
                     total_ops,
                     total_ops_completed: &total_ops_completed,
-                    progress_reporter: &*self.progress_reporter,
+                    progress_reporter: self.progress_reporter,
                     error: &error,
                 };
                 scope.spawn_broadcast(move |_, ctx| {
@@ -342,8 +341,7 @@ impl Task<'_> {
             }
             Some(Type::ReplaceXz) => {
                 let data = self.extract_data(op).context("Error extracting data")?;
-                let mut decoder = LzmaReader::new_decompressor(data)
-                    .context("Unable to initialize lzma decoder")?;
+                let mut decoder = XzDecoder::new(data);
                 self.run_op_replace(&mut decoder, &mut dst_extents)
                     .context("Error in REPLACE_XZ operation")
             }

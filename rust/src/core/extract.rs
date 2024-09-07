@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{bail, ensure, Context as _, Result};
 use bzip2::read::BzDecoder;
-use lzma::LzmaReader;
+// use lzma::LzmaReader;
 use memmap2::{Mmap, MmapMut};
 use prost::Message as _;
 use rayon::ThreadPoolBuilder;
@@ -251,11 +251,14 @@ impl ExtractOptions {
                     .context("Error in REPLACE_BZ operation")
             }
             Some(Type::ReplaceXz) => {
-                let data = Self::extract_data(op, payload).context("Error extracting data")?;
-                let mut decoder = LzmaReader::new_decompressor(data)
-                    .context("Unable to initialize lzma decoder")?;
-                Self::run_op_replace(&mut decoder, &mut dst_extents, block_size)
-                    .context("Error in REPLACE_XZ operation")
+                todo!()
+                // let data = Self::extract_data(op, payload).context("Error
+                // extracting data")?; let mut decoder =
+                // LzmaReader::new_decompressor(data)
+                //     .context("Unable to initialize lzma decoder")?;
+                // Self::run_op_replace(&mut decoder, &mut dst_extents,
+                // block_size)     .context("Error in REPLACE_XZ
+                // operation")
             }
             Some(Type::Zero) => Ok(()), // This is a no-op since the partition is already zeroed
             Some(op) => bail!("Unimplemented operation: {op:?}"),
