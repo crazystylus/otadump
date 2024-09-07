@@ -15,7 +15,7 @@ use std::ops::{Div as _, Mul as _};
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::OnceLock;
-use std::{error, result, slice};
+use std::{error, result, slice, thread};
 
 use anyhow::{bail, ensure, Context as _, Error, Result};
 use bzip2::read::BzDecoder;
@@ -26,7 +26,7 @@ use lzma::LzmaReader;
 use memmap2::{Mmap, MmapMut};
 use payload::Payload;
 use prost::Message as _;
-use rayon::ThreadPoolBuilder;
+use rayon::{BroadcastContext, ThreadPoolBuilder};
 pub use reporter::Reporter;
 use sha2::{Digest as _, Sha256};
 use sync_unsafe_cell::SyncUnsafeCell;
@@ -38,6 +38,7 @@ pub struct ExtractOptions2 {
     overwrite: bool,
     partitions: Option<HashSet<String>>,
     progress_reporter: Box<dyn ProgressReporter>,
+    verify: bool,
 }
 
 impl ExtractOptions2 {
@@ -48,6 +49,7 @@ impl ExtractOptions2 {
             overwrite: false,
             partitions: None,
             progress_reporter: Box::new(NoOpProgressReporter),
+            verify: true,
         }
     }
 
@@ -96,7 +98,7 @@ impl ExtractOptions2 {
 
         let num_threads = self
             .num_threads
-            .unwrap_or_else(|| std::thread::available_parallelism().map(NonZero::get).unwrap_or(1))
+            .unwrap_or_else(|| thread::available_parallelism().map(NonZero::get).unwrap_or(1))
             .max(1);
         let threadpool = ThreadPoolBuilder::new()
             .num_threads(num_threads)
@@ -106,6 +108,11 @@ impl ExtractOptions2 {
 
         threadpool.in_place_scope_fifo(|scope| -> Result<()> {
             for update in &manifest.partitions {
+                // Exit early if an error has occurred.
+                if error.get().is_some() {
+                    break;
+                }
+
                 // Skip partitions that are not in the list of partitions to be extracted.
                 if let Some(partitions) = &self.partitions {
                     if !partitions.contains(&update.partition_name) {
@@ -113,35 +120,32 @@ impl ExtractOptions2 {
                     }
                 }
 
-                let partition_file = self.open_partition_file(update, output_dir)?;
-                let state = Task {
+                // Create and broadcast a task to the threadpool.
+                let partition = self.open_partition_file(update, output_dir)?;
+                let task = Task {
                     payload: &payload,
                     block_size,
+                    verify: self.verify,
                     update,
                     op_idx: AtomicUsize::new(0),
-                    partition_file: SyncUnsafeCell::new(partition_file),
+                    partition: SyncUnsafeCell::new(partition),
                     error: &error,
                 };
-
-                scope.spawn_broadcast(move |_, _| {
-                    while state.error.get().is_none() {
-                        let op_idx = state.op_idx.fetch_add(1, Ordering::AcqRel);
-                        let Some(op) = state.update.operations.get(op_idx) else { break };
-                        if let Err(e) = state.run_op(op) {
-                            _ = state.error.set(e);
-                            break;
-                        }
+                scope.spawn_broadcast(move |_, ctx| {
+                    if let Err(e) = task.run(ctx) {
+                        _ = task.error.set(e);
                     }
                 });
             }
-
             Ok(())
         })?;
 
-        match error.take() {
-            Some(e) => Err(e),
-            None => Ok(()),
+        if let Some(e) = error.take() {
+            return Err(e);
         }
+
+        self.progress_reporter.report_progress(1.);
+        Ok(())
     }
 
     fn open_payload_file(path: &Path) -> Result<Mmap> {
@@ -235,6 +239,12 @@ impl ExtractOptions2 {
         self.progress_reporter = progress_reporter;
         self
     }
+
+    /// Verify the input and output partitions. This is enabled by default.
+    pub fn verify(&mut self, verify: bool) -> &mut Self {
+        self.verify = verify;
+        self
+    }
 }
 
 impl Default for ExtractOptions2 {
@@ -246,15 +256,36 @@ impl Default for ExtractOptions2 {
 struct Task<'a> {
     payload: &'a Payload<'a>,
     block_size: usize,
+    verify: bool,
 
     update: &'a PartitionUpdate,
     op_idx: AtomicUsize,
+    partition: SyncUnsafeCell<MmapMut>,
 
-    partition_file: SyncUnsafeCell<MmapMut>,
     error: &'a OnceLock<Error>,
 }
 
 impl Task<'_> {
+    fn run(&self, ctx: BroadcastContext<'_>) -> Result<()> {
+        // If an error has already occurred, stop processing the partition.
+        while self.error.get().is_none() {
+            let op_idx = self.op_idx.fetch_add(1, Ordering::AcqRel);
+            match self.update.operations.get(op_idx) {
+                Some(op) => self.run_op(op)?,
+                None => {
+                    // If this is the last thread to fetch an operation for this
+                    // partition, the partition is fully extracted and can now be
+                    // verified.
+                    if op_idx + 1 == self.update.operations.len() + ctx.num_threads() {
+                        self.verify_partition()?;
+                    };
+                    break;
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn run_op(&self, op: &InstallOperation) -> Result<()> {
         let mut dst_extents =
             self.extract_dst_extents(op).context("Error extracting dst_extents")?;
@@ -303,9 +334,8 @@ impl Task<'_> {
     }
 
     fn extract_dst_extents(&self, op: &InstallOperation) -> Result<Vec<&'static mut [u8]>> {
-        let partition_file = self.partition_file.get();
-        let partition = unsafe { (*partition_file).as_mut_ptr() };
-        let partition_len = unsafe { (*partition_file).len() };
+        let partition = unsafe { (*self.partition.get()).as_mut_ptr() };
+        let partition_len = unsafe { (*self.partition.get()).len() };
 
         op.dst_extents
             .iter()
@@ -340,24 +370,55 @@ impl Task<'_> {
                 .get(offset..offset + data_len)
                 .context("Data offset exceeds payload size")?
         };
-        if let Some(hash) = &op.data_sha256_hash {
-            Self::verify_sha256(data, hash).context("Input verification failed")?;
-        }
+        self.verify_op(op, data)?;
         Ok(data)
     }
 
-    fn verify_sha256(data: &[u8], exp_hash: &[u8]) -> Result<()> {
+    fn verify_op(&self, op: &InstallOperation, data: &[u8]) -> Result<()> {
+        if !self.verify {
+            return Ok(());
+        }
+        let Some(exp_hash) = &op.data_sha256_hash else {
+            return Ok(());
+        };
+
         let got_hash = Sha256::digest(data);
         ensure!(
             got_hash.as_slice() == exp_hash,
-            "Hash mismatch: expected {}, got {got_hash:x}",
+            "Input verification failed: hash mismatch: expected {}, got {got_hash:x}",
+            hex::encode(exp_hash)
+        );
+        Ok(())
+    }
+
+    fn verify_partition(&self) -> Result<()> {
+        // The chunk size is the number of bytes we verify before we count one "tick" in
+        // the progress tracker.
+        const VERIFY_CHUNK_SIZE: usize = 2 * 1024 * 1024; // 2 MiB
+
+        let Some(exp_hash) =
+            self.update.new_partition_info.as_ref().and_then(|info| info.hash.as_ref())
+        else {
+            return Ok(());
+        };
+
+        let mut digest = Sha256::new();
+        for chunk in unsafe { (*self.partition.get()).chunks(VERIFY_CHUNK_SIZE) } {
+            digest.update(chunk);
+            // self.progress_reporter.report_progress();
+        }
+
+        let got_hash = digest.finalize();
+        ensure!(
+            got_hash.as_slice() == exp_hash,
+            "Output verification failed: hash mismatch: expected {}, got {got_hash:x}",
             hex::encode(exp_hash)
         );
         Ok(())
     }
 }
 
-pub trait ProgressReporter {
+pub trait ProgressReporter: Sync {
     /// Reports the progress of the extraction process. The progress is provided
     /// as a value between 0 and 1.
     fn report_progress(&self, progress: f64);

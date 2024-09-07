@@ -206,15 +206,15 @@ impl ExtractOptions {
                             .and_then(|info| info.hash.as_ref())
                             .inspect(|hash| {
                                 let partition = unsafe { (*partition_file.get()).as_ref() };
-                                // let result = Self::verify_sha256_and_report(
-                                //     partition,
-                                //     hash,
-                                //     Arc::clone(&tracker),
-                                // )
-                                // .context("Output verification failed");
-                                // if let Err(e) = result {
-                                //     tracker.report_error(e.into());
-                                // }
+                                let result = Self::verify_sha256_and_report(
+                                    partition,
+                                    hash,
+                                    Arc::clone(&tracker),
+                                )
+                                .context("Output verification failed");
+                                if let Err(e) = result {
+                                    tracker.report_error(e.into());
+                                }
                             });
                     });
                 }
