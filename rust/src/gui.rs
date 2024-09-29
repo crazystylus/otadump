@@ -1,7 +1,7 @@
 use std::error::Error;
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager as _};
+use tauri::{AppHandle, Emitter};
 
 use crate::core::ExtractOptions;
 
@@ -23,7 +23,7 @@ impl Reporter {
     }
 
     fn emit_all(&self, message: Message) {
-        if let Err(e) = self.app.emit_all(Self::EVENT_NAME, message) {
+        if let Err(e) = self.app.emit(Self::EVENT_NAME, message) {
             eprintln!("failed to emit message: {}", e);
         }
     }

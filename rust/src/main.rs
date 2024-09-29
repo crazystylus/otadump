@@ -1,30 +1,17 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::path::PathBuf;
-use std::{env, thread};
+use std::env;
 
-use anyhow::{Context, Result};
-use otadump::core::ExtractOptions;
-use otadump::{cli, gui};
-use tauri::AppHandle;
-
-#[tauri::command]
-fn extract(app: AppHandle, payload_file: PathBuf, output_dir: PathBuf) {
-    thread::spawn(move || {
-        let options = ExtractOptions { payload_file, output_dir };
-        gui::extract(app, options);
-    });
-}
+use anyhow::Result;
+use app_lib::cli;
 
 fn main() -> Result<()> {
     // If there are no args, start the GUI. Else, treat it as a command-line
     // invocation.
     if env::args_os().count() <= 1 {
-        tauri::Builder::default()
-            .invoke_handler(tauri::generate_handler![extract])
-            .run(tauri::generate_context!())
-            .context("Error running application")
+        app_lib::run();
+        Ok(())
     } else {
         cli::extract();
         Ok(())

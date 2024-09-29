@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/tauri";
+import { invoke } from "@tauri-apps/api/core";
 import {
   Button,
   Field,
@@ -18,7 +18,10 @@ import "reset-css";
 import { Message, ValidationState, MessageKind } from "./interfaces";
 import { Col, SectionTitle, Row } from "./helper-components";
 import { css, keyframes } from "@emotion/react";
-import { dialog, process, shell } from "@tauri-apps/api";
+import {    } from "@tauri-apps/api";
+import * as dialog from "@tauri-apps/plugin-dialog"
+import * as process from "@tauri-apps/plugin-process"
+import * as shell from "@tauri-apps/plugin-shell"
 
 const getProgress = (message?: Message): number => {
   switch (message?.kind) {

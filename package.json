@@ -12,7 +12,10 @@
   "dependencies": {
     "@emotion/react": "^11.11.4",
     "@fluentui/react-components": "^9.47.3",
-    "@tauri-apps/api": "^1",
+    "@tauri-apps/api": "^2.0.0-rc.0",
+    "@tauri-apps/plugin-dialog": "~2.0.0-rc",
+    "@tauri-apps/plugin-process": "~2.0.0-rc",
+    "@tauri-apps/plugin-shell": "~2.0.0-rc",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "reset-css": "^5.0.2"
@@ -23,6 +26,6 @@
     "@vitejs/plugin-react": "^4.2.1",
     "typescript": "^5.0.2",
     "vite": "^5.0.0",
-    "@tauri-apps/cli": "^1"
+    "@tauri-apps/cli": "^2.0.0-rc.17"
   }
 }

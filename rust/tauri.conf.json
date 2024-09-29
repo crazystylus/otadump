@@ -2,27 +2,34 @@
   "build": {
     "beforeDevCommand": "bun run dev",
     "beforeBuildCommand": "bun run build",
-    "devPath": "http://localhost:1420",
-    "distDir": "../dist"
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420"
   },
-  "package": {
-    "productName": "otadump",
-    "version": "0.1.3"
+  "bundle": {
+    "active": true,
+    "icon": [
+      "icons/otadump.icns",
+      "icons/otadump.ico",
+      "icons/otadump.png",
+      "icons/otadump.svg"
+    ],
+    "category": "Utility",
+    "copyright": "© Copyright 2024 Kartik Sharma and Ajeet D'Souza",
+    "publisher": "crazystylus",
+    "shortDescription": "Extract partitions from Android OTA files.",
+    "targets": "all"
   },
-  "tauri": {
-    "allowlist": {
-      "all": false,
-      "dialog": {
-        "open": true
-      },
-      "process": {
-        "all": false,
-        "exit": true
-      },
-      "shell": {
-        "all": false,
-        "open": ".*"
-      }
+  "productName": "otadump",
+  "mainBinaryName": "otadump",
+  "version": "0.1.3",
+  "identifier": "otadump",
+  "plugins": {},
+  "app": {
+    "security": {
+      "capabilities": [
+        "main-capability"
+      ],
+      "csp": null
     },
     "windows": [
       {
@@ -31,24 +38,6 @@
         "width": 600,
         "height": 800
       }
-    ],
-    "security": {
-      "csp": null
-    },
-    "bundle": {
-      "active": true,
-      "identifier": "otadump",
-      "category": "Utility",
-      "copyright": "© Copyright 2024 Kartik Sharma and Ajeet D'Souza",
-      "publisher": "crazystylus",
-      "shortDescription": "Extract partitions from Android OTA files.",
-      "targets": "all",
-      "icon": [
-        "icons/otadump.icns",
-        "icons/otadump.ico",
-        "icons/otadump.png",
-        "icons/otadump.svg"
-      ]
-    }
+    ]
   }
 }
