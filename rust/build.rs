@@ -4,4 +4,6 @@ fn main() {
         &[] as &[&str],
     )
     .expect("error compiling protobuf files");
+
+    tauri_build::build();
 }

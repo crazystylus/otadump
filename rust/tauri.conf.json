@@ -1,0 +1,43 @@
+{
+  "build": {
+    "beforeDevCommand": "bun run dev",
+    "beforeBuildCommand": "bun run build",
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420"
+  },
+  "bundle": {
+    "active": true,
+    "icon": [
+      "icons/otadump.icns",
+      "icons/otadump.ico",
+      "icons/otadump.png",
+      "icons/otadump.svg"
+    ],
+    "category": "Utility",
+    "copyright": "© Copyright 2024 Kartik Sharma and Ajeet D'Souza",
+    "publisher": "crazystylus",
+    "shortDescription": "Extract partitions from Android OTA files.",
+    "targets": "all"
+  },
+  "productName": "otadump",
+  "mainBinaryName": "otadump",
+  "version": "0.1.3",
+  "identifier": "otadump",
+  "plugins": {},
+  "app": {
+    "security": {
+      "capabilities": [
+        "main-capability"
+      ],
+      "csp": null
+    },
+    "windows": [
+      {
+        "title": "otadump",
+        "label": "otadump",
+        "width": 600,
+        "height": 800
+      }
+    ]
+  }
+}

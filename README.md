@@ -9,7 +9,7 @@
 
 [![crates.io][crates.io-badge]][crates.io]
 
-**`otadump` helps you extract partitions from Android OTA files.** <br />
+***Embarrassingly* parallel partition extraction for Android OTA files.** <br />
 Partitions can be individually flashed to your device using `fastboot`.
 
 Compared to other tools, `otadump` is significantly faster and handles file

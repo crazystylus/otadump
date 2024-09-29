@@ -4,6 +4,7 @@ use nom_derive::{NomBE, Parse};
 /// Update file format: contains all the operations needed to update a system to
 /// a specific version. It can be a full payload which can update from any
 /// version, or a delta payload which can only update from a specific version.
+#[allow(dead_code)]
 #[derive(Debug, NomBE)]
 pub struct Payload<'a> {
     /// Should be "CrAU".
@@ -38,10 +39,8 @@ pub struct Payload<'a> {
 
 impl<'a> Payload<'a> {
     pub fn parse(bytes: &'a [u8]) -> Result<Self> {
-        // TODO: this outputs the entire bytes of the file in the event of a
-        // parser error. Use nom's VerboseError here.
-        let (_, payload): (_, Payload) = Parse::parse(bytes)
-            .map_err(|e| anyhow!(e.to_string()).context("failed to parse payload"))?;
+        let (_, payload): (_, Payload) =
+            Parse::parse(bytes).map_err(|_| anyhow!("Unable to parse payload file"))?;
         Ok(payload)
     }
 }

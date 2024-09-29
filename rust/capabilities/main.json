@@ -1,0 +1,12 @@
+{
+  "identifier": "main-capability",
+  "description": "Capability for the otadump window",
+  "local": true,
+  "windows": [
+    "otadump"
+  ],
+  "permissions": [
+    "dialog:allow-open",
+    "process:allow-exit"
+  ]
+}
