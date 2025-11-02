@@ -42,8 +42,8 @@ impl<'a> Payload<'a> {
     pub fn parse(bytes: &'a [u8]) -> Result<Self> {
         match Parse::parse(bytes).finish() {
             Ok((_, payload)) => Ok(payload),
-            Err(e) if e.code == nom::error::ErrorKind::Tag => bail!("invalid payload file"),
-            Err(_) => bail!("unable to parse payload"),
+            Err(e) if e.code == nom::error::ErrorKind::Tag => bail!("Invalid payload file"),
+            Err(_) => bail!("Unable to parse payload file"),
         }
     }
 }
