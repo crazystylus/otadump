@@ -1,4 +1,5 @@
 #[allow(clippy::all)]
+#[allow(dead_code)]
 mod chromeos_update_engine {
     include!(concat!(env!("OUT_DIR"), "/chromeos_update_engine.rs"));
 }
@@ -388,7 +389,7 @@ impl Task<'_> {
 
     fn extract_dst_extents(&self, op: &InstallOperation) -> Result<Vec<&'static mut [u8]>> {
         let partition = unsafe { (*self.partition.get()).as_mut_ptr() };
-        let partition_len = unsafe { (*self.partition.get()).len() };
+        let partition_len = unsafe { (&(*self.partition.get())).len() };
 
         op.dst_extents
             .iter()

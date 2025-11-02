@@ -1,4 +1,5 @@
-use anyhow::{Result, anyhow};
+use anyhow::{Result, bail};
+use nom::Finish;
 use nom_derive::{NomBE, Parse};
 
 /// Update file format: contains all the operations needed to update a system to
@@ -39,8 +40,10 @@ pub struct Payload<'a> {
 
 impl<'a> Payload<'a> {
     pub fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let (_, payload): (_, Payload) =
-            Parse::parse(bytes).map_err(|_| anyhow!("Unable to parse payload file"))?;
-        Ok(payload)
+        match Parse::parse(bytes).finish() {
+            Ok((_, payload)) => Ok(payload),
+            Err(e) if e.code == nom::error::ErrorKind::Tag => bail!("invalid payload file"),
+            Err(_) => bail!("unable to parse payload"),
+        }
     }
 }
